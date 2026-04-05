@@ -409,13 +409,20 @@ body { background: var(--bg); font-family: var(--font); color: var(--text); min-
 <div class="main">
   <!-- ── PAGE 1: Executive Overview ──────────────────────────────────────── -->
   <div id="page-overview" class="page active">
-    <div id="exec-summary-container"></div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:20px;">
+      <div id="exec-summary-wow"></div>
+      <div id="exec-summary-yoy"></div>
+    </div>
     <div id="kpi-grid-container"></div>
     <div id="overview-charts"></div>
   </div>
 
   <!-- ── PAGE 2: Detailed Analytics ──────────────────────────────────────── -->
   <div id="page-details" class="page">
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:20px;">
+      <div id="exec-summary-wow-p2"></div>
+      <div id="exec-summary-yoy-p2"></div>
+    </div>
     <div id="i2a-section"></div>
     <div id="engagement-section"></div>
     <div id="adoption-section"></div>
@@ -668,13 +675,14 @@ function buildAdoptionChart(id, labels, ownedData, totalData) {
 // ═══════════════════════════════════════════════════════════════════════════════
 //  EXECUTIVE SUMMARY RENDERER
 // ═══════════════════════════════════════════════════════════════════════════════
-function renderExecSummary(summaryData) {
-  const el = document.getElementById("exec-summary-container");
+function renderExecSummary(summaryData, containerId, modeLabel) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
   if (!summaryData || !summaryData.summary || !summaryData.summary.length) {
     el.innerHTML = `<div class="exec-summary"><div class="exec-header">
-      <span class="ai-icon">✦</span><h2>Weekly Executive Summary</h2>
+      <span class="ai-icon">✦</span><h2>Executive Summary — ${modeLabel}</h2>
     </div><div style="padding:20px 24px;color:var(--muted);font-size:13px;">
-      Insufficient data to generate summary. More data points needed.
+      Insufficient data for ${modeLabel} summary.
     </div></div>`;
     return;
   }
@@ -687,14 +695,14 @@ function renderExecSummary(summaryData) {
     <div class="exec-summary">
       <div class="exec-header">
         <span class="ai-icon">✦</span>
-        <h2>Weekly Executive Summary</h2>
-        <span class="period-badge">Week of ${fmtDate(summaryData.period)}</span>
+        <h2>Executive Summary — ${modeLabel}</h2>
+        <span class="period-badge">${fmtDate(summaryData.period)}</span>
       </div>
       <div class="exec-chips">
         <button class="exec-chip active" data-cat="all">All</button>
         ${categories.map(c => `<button class="exec-chip" data-cat="${c}">${c.charAt(0).toUpperCase() + c.slice(1)}</button>`).join("")}
       </div>
-      <ul class="exec-bullets" id="exec-bullets">
+      <ul class="exec-bullets">
         ${bullets.map(b => `
           <li class="exec-bullet" data-cat="${b.category}">
             <div class="bullet-icon ${b.category}">${iconMap[b.category] || "•"}</div>
@@ -1149,7 +1157,7 @@ function toggleGlossary(btn) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // Fix 7: fetch with AbortController timeout
-function fetchWithTimeout(url, timeoutMs = 30000) {
+function fetchWithTimeout(url, timeoutMs = 120000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   return fetch(url, { signal: controller.signal }).finally(() => clearTimeout(timer));
@@ -1178,7 +1186,8 @@ async function loadData() {
   Object.keys(chartInstances).forEach(k => delete chartInstances[k]);
 
   // Show loading on all containers
-  ["exec-summary-container", "kpi-grid-container", "overview-charts", "i2a-section", "engagement-section", "adoption-section"]
+  ["exec-summary-wow", "exec-summary-yoy", "exec-summary-wow-p2", "exec-summary-yoy-p2",
+   "kpi-grid-container", "overview-charts", "i2a-section", "engagement-section", "adoption-section"]
     .forEach(id => {
       const el = document.getElementById(id);
       if (el) el.innerHTML = `<div class="state-box"><div class="spinner"></div> Loading…</div>`;
@@ -1189,13 +1198,14 @@ async function loadData() {
       ecu: state.ecu, hvc: state.hvc, granularity: state.granularity, tenure: state.tenure
     }).toString();
 
-    // Fetch all 5 APIs in parallel with 30s timeout
-    const [metricsRes, adoptionRes, i2aRes, engagementRes, summaryRes] = await Promise.all([
+    // Fetch all 6 APIs in parallel — TWO executive summaries (WoW + YoY)
+    const [metricsRes, adoptionRes, i2aRes, engagementRes, summaryWoWRes, summaryYoYRes] = await Promise.all([
       fetchWithTimeout("/api/metrics?" + qs),
       fetchWithTimeout("/api/adoption?" + qs),
-      fetchWithTimeout("/api/i2a?" + qs, 120000),  // I2A queries raw tables, may be slow
+      fetchWithTimeout("/api/i2a?" + qs, 120000),
       fetchWithTimeout("/api/engagement?" + qs),
       fetchWithTimeout("/api/executive-summary?" + qs + "&compare=wow"),
+      fetchWithTimeout("/api/executive-summary?" + qs + "&compare=yoy"),
     ]);
 
     if (!metricsRes.ok) {
@@ -1206,7 +1216,6 @@ async function loadData() {
     const metricsData = await metricsRes.json();
     const i2aData = i2aRes.ok ? await i2aRes.json() : [];
 
-    // Adoption/engagement may return {data, meta} wrapper (Fix 4)
     const adoptionJson = adoptionRes.ok ? await adoptionRes.json() : {};
     const adoptionData = Array.isArray(adoptionJson) ? adoptionJson : (adoptionJson.data || []);
     const adoptionMeta = adoptionJson.meta || null;
@@ -1214,7 +1223,8 @@ async function loadData() {
     const engagementJson = engagementRes.ok ? await engagementRes.json() : {};
     const engagementData = Array.isArray(engagementJson) ? engagementJson : (engagementJson.data || []);
 
-    const summaryData = summaryRes.ok ? await summaryRes.json() : null;
+    const summaryWoW = summaryWoWRes.ok ? await summaryWoWRes.json() : null;
+    const summaryYoY = summaryYoYRes.ok ? await summaryYoYRes.json() : null;
 
     const adoptionMap = new Map(adoptionData.map(d => [d.period_start, d]));
 
@@ -1224,17 +1234,22 @@ async function loadData() {
       return;
     }
 
-    // ── Render Page 1: Executive Overview ──
-    renderExecSummary(summaryData);
+    // ── Render dual summaries on BOTH pages ──
+    renderExecSummary(summaryWoW, "exec-summary-wow", "Week-over-Week");
+    renderExecSummary(summaryYoY, "exec-summary-yoy", "Year-over-Year");
+    renderExecSummary(summaryWoW, "exec-summary-wow-p2", "Week-over-Week");
+    renderExecSummary(summaryYoY, "exec-summary-yoy-p2", "Year-over-Year");
+
+    // ── Render Page 1: KPIs + Charts ──
     renderKPIGrid(metricsData, i2aData);
     renderOverviewCharts(metricsData, adoptionMap, i2aData);
 
-    // ── Render Page 2: Detailed Analytics ──
+    // ── Render Page 2: I2A + Engagement ──
     renderI2ASection(i2aData);
     renderEngagementSection(engagementData);
     document.getElementById("adoption-section").innerHTML = "";
 
-    // Update header timestamp + freshness (Fix 4)
+    // Update header timestamp + freshness
     const latestWeek = metricsData[metricsData.length - 1]?.period_start ?? "";
     document.getElementById("last-updated").textContent = "Latest data: " + fmtDate(latestWeek);
     if (adoptionMeta) updateFreshness(adoptionMeta);
@@ -1250,7 +1265,7 @@ async function loadData() {
           and BigQuery credentials: <code>gcloud auth application-default login</code>
         </span>
       </div>`;
-    ["exec-summary-container", "overview-charts", "i2a-section", "engagement-section"]
+    ["exec-summary-wow", "exec-summary-yoy", "overview-charts", "i2a-section", "engagement-section"]
       .forEach(id => {
         const el = document.getElementById(id);
         if (el) el.innerHTML = errorHtml;

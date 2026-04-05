@@ -47,9 +47,12 @@ class TestHTMLStructure:
         assert 'id="page-overview"' in html
         assert 'id="page-details"' in html
 
-    def test_has_exec_summary_container(self):
+    def test_has_dual_exec_summary_containers(self):
         html = _read_html()
-        assert 'id="exec-summary-container"' in html
+        assert 'id="exec-summary-wow"' in html
+        assert 'id="exec-summary-yoy"' in html
+        assert 'id="exec-summary-wow-p2"' in html
+        assert 'id="exec-summary-yoy-p2"' in html
 
     def test_has_kpi_grid_container(self):
         html = _read_html()
@@ -208,25 +211,26 @@ class TestJSLogic:
 
 class TestDesignSystem:
 
-    def test_uses_intuit_sidebar_color(self):
+    def test_uses_black_sidebar(self):
         html = _read_html()
-        assert "#162251" in html, "Missing Intuit sidebar navy color"
+        assert "#111111" in html, "Missing black sidebar color"
 
-    def test_uses_intuit_page_bg(self):
+    def test_uses_grey_page_bg(self):
         html = _read_html()
-        assert "#f0f4f8" in html, "Missing Intuit page background"
+        assert "#f5f5f5" in html, "Missing grey page background"
 
-    def test_uses_intuit_accent_blue(self):
+    def test_uses_dark_accent(self):
         html = _read_html()
-        assert "#0070d2" in html, "Missing Intuit accent blue"
+        assert "#222222" in html, "Missing dark accent color"
 
-    def test_uses_ai_teal(self):
+    def test_uses_grey_tones(self):
         html = _read_html()
-        assert "#00b9a9" in html, "Missing AI teal accent"
+        assert "#666666" in html, "Missing mid-grey tone"
+        assert "#555555" in html, "Missing chart grey"
 
-    def test_uses_chart_navy(self):
+    def test_uses_black_chart_color(self):
         html = _read_html()
-        assert "#1e3a6e" in html, "Missing chart navy color"
+        assert "#111111" in html, "Missing black chart color"
 
     def test_uses_avenir_font(self):
         html = _read_html()
@@ -252,9 +256,9 @@ class TestDesignSystem:
 
 class TestExecSummaryRendering:
 
-    def test_render_function_exists(self):
+    def test_render_function_accepts_container_and_mode(self):
         html = _read_html()
-        assert "function renderExecSummary(" in html
+        assert "function renderExecSummary(summaryData, containerId, modeLabel)" in html
 
     def test_handles_empty_summary(self):
         html = _read_html()
