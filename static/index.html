@@ -8,27 +8,27 @@
 <style>
 /* ── Intuit / QBO FY27 Design System ─────────────────────────────────────── */
 :root {
-  --sidebar:      #162251;
-  --bg:           #f0f4f8;
+  --sidebar:      #111111;
+  --bg:           #f5f5f5;
   --card:         #ffffff;
-  --border:       #e8edf5;
-  --shadow:       0 1px 4px rgba(26,40,96,0.08);
-  --text:         #1a1f36;
-  --muted:        #6b7c93;
-  --accent:       #0070d2;
-  --ai-teal:      #00b9a9;
-  --ai-teal-bg:   rgba(0,185,169,0.08);
-  --green:        #1aab68;
-  --green-bg:     #dcfce7;
-  --red:          #d13438;
-  --red-bg:       #fee2e2;
-  --amber:        #f59e0b;
-  --amber-bg:     #fffbeb;
-  --chart-navy:   #1e3a6e;
-  --chart-blue:   #4472c4;
-  --chart-teal:   #00b9a9;
-  --chart-pink:   #f4809b;
-  --py-color:     #94a3b8;
+  --border:       #e0e0e0;
+  --shadow:       0 1px 4px rgba(0,0,0,0.08);
+  --text:         #111111;
+  --muted:        #666666;
+  --accent:       #222222;
+  --ai-teal:      #444444;
+  --ai-teal-bg:   rgba(0,0,0,0.04);
+  --green:        #1a8a4a;
+  --green-bg:     #e6f4ea;
+  --red:          #c42b2b;
+  --red-bg:       #fce8e8;
+  --amber:        #b87a00;
+  --amber-bg:     #fef3e0;
+  --chart-navy:   #111111;
+  --chart-blue:   #555555;
+  --chart-teal:   #888888;
+  --chart-pink:   #999999;
+  --py-color:     #aaaaaa;
   --radius:       8px;
   --font:         'Avenir Next', -apple-system, 'Helvetica Neue', Arial, sans-serif;
 }
@@ -540,12 +540,12 @@ function buildChart(id, labels, current, priorWeek, priorYear, fmt, opts = {}) {
   const datasets = [{
     label: "Current",
     data: current,
-    borderColor: opts.color || "#1e3a6e",
-    backgroundColor: opts.fill ? (opts.fillColor || "rgba(30,58,110,.06)") : "transparent",
+    borderColor: opts.color || "#111111",
+    backgroundColor: opts.fill ? (opts.fillColor || "rgba(17,17,17,.05)") : "transparent",
     borderWidth: 2.5,
     pointRadius: 2,
     pointHoverRadius: 5,
-    pointBackgroundColor: opts.color || "#1e3a6e",
+    pointBackgroundColor: opts.color || "#111111",
     tension: 0.35,
     fill: !!opts.fill,
     spanGaps: true,
@@ -556,7 +556,7 @@ function buildChart(id, labels, current, priorWeek, priorYear, fmt, opts = {}) {
     datasets.push({
       label: "Prior Week",
       data: priorWeek,
-      borderColor: "#00b9a9",
+      borderColor: "#666666",
       backgroundColor: "transparent",
       borderWidth: 1.5,
       borderDash: [3, 3],
@@ -595,7 +595,7 @@ function buildChart(id, labels, current, priorWeek, priorYear, fmt, opts = {}) {
       plugins: {
         legend: { display: false },
         tooltip: {
-          backgroundColor: "rgba(22,34,81,.95)",
+          backgroundColor: "rgba(17,17,17,.95)",
           padding: 10, cornerRadius: 6,
           titleFont: { size: 12, weight: "600" },
           bodyFont: { size: 12 },
@@ -632,18 +632,18 @@ function buildAdoptionChart(id, labels, ownedData, totalData) {
         {
           label: "Owned Pages",
           data: ownedData,
-          borderColor: "#1e3a6e",
-          backgroundColor: "rgba(30,58,110,.06)",
+          borderColor: "#111111",
+          backgroundColor: "rgba(17,17,17,.05)",
           borderWidth: 2.5, pointRadius: 2, pointHoverRadius: 5,
-          pointBackgroundColor: "#1e3a6e", tension: 0.35, fill: true, spanGaps: true,
+          pointBackgroundColor: "#111111", tension: 0.35, fill: true, spanGaps: true,
         },
         {
           label: "Owned + Supported CTAs",
           data: totalData,
-          borderColor: "#4472c4",
-          backgroundColor: "rgba(68,114,196,.06)",
+          borderColor: "#555555",
+          backgroundColor: "rgba(85,85,85,.06)",
           borderWidth: 2.5, pointRadius: 2, pointHoverRadius: 5,
-          pointBackgroundColor: "#4472c4", tension: 0.35, fill: true, spanGaps: true,
+          pointBackgroundColor: "#555555", tension: 0.35, fill: true, spanGaps: true,
         }
       ]
     },
@@ -653,7 +653,7 @@ function buildAdoptionChart(id, labels, ownedData, totalData) {
       plugins: {
         legend: { display: false },
         tooltip: {
-          backgroundColor: "rgba(22,34,81,.95)", padding: 10, cornerRadius: 6,
+          backgroundColor: "rgba(17,17,17,.95)", padding: 10, cornerRadius: 6,
           callbacks: { label: ctx => ` ${ctx.dataset.label}: ${ctx.raw == null ? "N/A" : fmtPct(ctx.raw)}` }
         }
       },
@@ -804,7 +804,7 @@ function renderOverviewCharts(data, adoptionMap, i2aData) {
   const legendHtml = `
     <div class="chart-legend">
       <div class="legend-item"><div class="leg-line current"></div> Current</div>
-      ${isWeekly ? '<div class="legend-item"><div class="leg-line" style="background:#00b9a9;"></div> Prior Week</div>' : ''}
+      ${isWeekly ? '<div class="legend-item"><div class="leg-line" style="background:#666666;"></div> Prior Week</div>' : ''}
       <div class="legend-item"><div class="leg-line prior"></div> Prior Year</div>
     </div>`;
 
@@ -983,7 +983,7 @@ function renderI2ASection(data) {
   const legendHtml = `
     <div class="chart-legend">
       <div class="legend-item"><div class="leg-line current"></div> Current</div>
-      ${isWeekly ? '<div class="legend-item"><div class="leg-line" style="background:#00b9a9;"></div> Prior Week</div>' : ''}
+      ${isWeekly ? '<div class="legend-item"><div class="leg-line" style="background:#666666;"></div> Prior Week</div>' : ''}
       <div class="legend-item"><div class="leg-line prior"></div> Prior Year</div>
     </div>`;
 
