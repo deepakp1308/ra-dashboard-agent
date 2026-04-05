@@ -92,13 +92,13 @@ class TestFilterElements:
         assert 'data-filter="granularity" data-value="weekly"' in html
         assert 'data-filter="granularity" data-value="monthly"' in html
 
-    def test_tenure_filter_disabled(self):
-        """Tenure filter should be present but disabled."""
+    def test_tenure_filter_enabled(self):
+        """Tenure filter should be present and enabled with data-filter attributes."""
         html = _read_html()
         assert "Tenure" in html
-        # Should have disabled buttons
-        tenure_section = html[html.index("Tenure"):]
-        assert "disabled" in tenure_section[:500]
+        assert 'data-filter="tenure" data-value="all"' in html
+        assert 'data-filter="tenure" data-value="new"' in html
+        assert 'data-filter="tenure" data-value="tenured"' in html
 
     def test_all_filter_buttons_have_data_attributes(self):
         """Every non-disabled filter-btn must have data-filter and data-value."""

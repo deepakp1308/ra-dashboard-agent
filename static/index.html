@@ -395,14 +395,14 @@ body { background: var(--bg); font-family: var(--font); color: var(--text); min-
   </div>
   <div class="filter-group">
     <label>Granularity</label>
-    <button class="filter-btn active" data-filter="granularity" data-value="weekly">Weekly</button>
-    <button class="filter-btn" data-filter="granularity" data-value="monthly">Monthly</button>
+    <button class="filter-btn" data-filter="granularity" data-value="weekly">Weekly</button>
+    <button class="filter-btn active" data-filter="granularity" data-value="monthly">Monthly</button>
   </div>
-  <div class="filter-group" title="Tenure segmentation coming soon — requires signup date data">
+  <div class="filter-group" title="New: active < 90 days. Tenured: active >= 90 days.">
     <label>Tenure</label>
-    <button class="filter-btn active disabled">All</button>
-    <button class="filter-btn disabled">New</button>
-    <button class="filter-btn disabled">Tenured</button>
+    <button class="filter-btn active" data-filter="tenure" data-value="all">All</button>
+    <button class="filter-btn" data-filter="tenure" data-value="new">New</button>
+    <button class="filter-btn" data-filter="tenure" data-value="tenured">Tenured</button>
   </div>
 </div>
 
@@ -426,7 +426,7 @@ body { background: var(--bg); font-family: var(--font); color: var(--text); min-
 // ═══════════════════════════════════════════════════════════════════════════════
 //  STATE & CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════════
-const state = { ecu: "all", hvc: "all", granularity: "weekly" };
+const state = { ecu: "all", hvc: "all", granularity: "monthly", tenure: "all" };
 const chartInstances = {};
 let currentTab = "overview";
 let engagementTab = "all";
@@ -1186,7 +1186,7 @@ async function loadData() {
 
   try {
     const qs = new URLSearchParams({
-      ecu: state.ecu, hvc: state.hvc, granularity: state.granularity
+      ecu: state.ecu, hvc: state.hvc, granularity: state.granularity, tenure: state.tenure
     }).toString();
 
     // Fetch all 5 APIs in parallel with 30s timeout

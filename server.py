@@ -63,17 +63,21 @@ VALID_ECU = {"all", "ecu", "non_ecu"}
 VALID_HVC = {"all", "hvc", "non_hvc"}
 VALID_GRANULARITY = {"weekly", "monthly"}
 VALID_COMPARE = {"none", "wow", "yoy"}
+VALID_TENURE = {"all", "new", "tenured"}
+TENURE_THRESHOLD_DAYS = 90  # New < 90 days, Tenured >= 90 days
 
 
-def _validate_filters(ecu, hvc, granularity):
+def _validate_filters(ecu, hvc, granularity, tenure="all"):
     """Reject invalid filter values before they reach SQL."""
     errors = []
     if ecu not in VALID_ECU:
-        errors.append(f"Invalid ecu value: '{ecu}'. Must be one of {VALID_ECU}")
+        errors.append(f"Invalid ecu: '{ecu}'")
     if hvc not in VALID_HVC:
-        errors.append(f"Invalid hvc value: '{hvc}'. Must be one of {VALID_HVC}")
+        errors.append(f"Invalid hvc: '{hvc}'")
     if granularity not in VALID_GRANULARITY:
-        errors.append(f"Invalid granularity: '{granularity}'. Must be one of {VALID_GRANULARITY}")
+        errors.append(f"Invalid granularity: '{granularity}'")
+    if tenure not in VALID_TENURE:
+        errors.append(f"Invalid tenure: '{tenure}'")
     return errors
 
 
@@ -104,6 +108,28 @@ def _hvc_clause(hvc, prefix="", string_type=True):
         return f"{p}is_high_value IN (TRUE, FALSE)"
 
 
+def _tenure_having_clause(tenure, week_col="w.week", user_col="w.user_id"):
+    """
+    Tenure filter using first-active-week derived from user_dimensions_weekly_rollup.
+    New: account active < 90 days. Tenured: >= 90 days.
+    Applied as HAVING clause after GROUP BY user_id, week.
+    """
+    if tenure == "new":
+        return f"HAVING DATE_DIFF({week_col}, MIN({week_col}) OVER (PARTITION BY {user_col}), DAY) < {TENURE_THRESHOLD_DAYS}"
+    elif tenure == "tenured":
+        return f"HAVING DATE_DIFF({week_col}, MIN({week_col}) OVER (PARTITION BY {user_col}), DAY) >= {TENURE_THRESHOLD_DAYS}"
+    return ""
+
+
+def _tenure_where_clause(tenure):
+    """Tenure filter as WHERE clause using pre-computed tenure_days column."""
+    if tenure == "new":
+        return f"AND tenure_days < {TENURE_THRESHOLD_DAYS}"
+    elif tenure == "tenured":
+        return f"AND tenure_days >= {TENURE_THRESHOLD_DAYS}"
+    return ""
+
+
 def _period_expr(granularity, col="week"):
     if granularity == "monthly":
         return f"DATE_TRUNC({col}, MONTH)"
@@ -113,11 +139,12 @@ def _period_expr(granularity, col="week"):
 def _get_filters():
     ecu = request.args.get("ecu", "all")
     hvc = request.args.get("hvc", "all")
-    granularity = request.args.get("granularity", "weekly")
-    errors = _validate_filters(ecu, hvc, granularity)
+    granularity = request.args.get("granularity", "monthly")  # Monthly default
+    tenure = request.args.get("tenure", "all")
+    errors = _validate_filters(ecu, hvc, granularity, tenure)
     if errors:
-        return None, None, None, errors
-    return ecu, hvc, granularity, None
+        return None, None, None, None, errors
+    return ecu, hvc, granularity, tenure, None
 
 
 def _metrics_in_clause(metric_list):
@@ -175,7 +202,7 @@ def get_metrics():
     Fix 5: category = 'L1' filter prevents double-counting across L1/L2/L3.
     Fix 6: pw_has_data / py_has_data flags for null-vs-zero distinction.
     """
-    ecu, hvc, granularity, errors = _get_filters()
+    ecu, hvc, granularity, tenure, errors = _get_filters()
     if errors:
         return jsonify({"error": errors}), 400
 
@@ -354,11 +381,11 @@ def get_adoption():
     """
     R&A Adoption — de-duplicated union from ECS (bypasses Dataform double-counting).
     """
-    ecu, hvc, granularity, errors = _get_filters()
+    ecu, hvc, granularity, tenure, errors = _get_filters()
     if errors:
         return jsonify({"error": errors}), 400
 
-    cache_key = f"adoption|{ecu}|{hvc}|{granularity}"
+    cache_key = f"adoption|{ecu}|{hvc}|{granularity}|{tenure}"
     cached, cache_ts, hit = _cache_get(cache_key)
     if hit:
         logger.info(f"adoption cache HIT (age={(datetime.datetime.utcnow()-cache_ts).total_seconds():.0f}s)")
@@ -366,9 +393,12 @@ def get_adoption():
 
     period_expr = "DATE_TRUNC(b.week, MONTH)" if granularity == "monthly" else "b.week"
 
+    tenure_filter = _tenure_where_clause(tenure)
+
     query = f"""
-    WITH base_user AS (
-        SELECT w.user_id, w.week
+    WITH base_user_raw AS (
+        SELECT w.user_id, w.week,
+               DATE_DIFF(w.week, MIN(w.week) OVER (PARTITION BY w.user_id), DAY) AS tenure_days
         FROM `mc-analytics-devel.bi_product.user_dimensions_weekly_rollup` w
         WHERE w.week >= '2024-01-01'
           AND w.week < DATE_TRUNC(CURRENT_DATE, WEEK)
@@ -377,6 +407,9 @@ def get_adoption():
           AND {_ecu_clause(ecu, 'w')}
           AND {_hvc_clause(hvc, 'w', string_type=False)}
         GROUP BY ALL
+    ),
+    base_user AS (
+        SELECT user_id, week FROM base_user_raw WHERE 1=1 {tenure_filter}
     ),
     owned_pages AS (
         SELECT DISTINCT DATE_TRUNC(DATE(timestamp), WEEK) AS week, user_id
@@ -494,22 +527,24 @@ def get_i2a():
     Queries raw tables directly (not the pre-aggregated Dataform table which uses 1-day).
     Returns weekly data with current, prior-year, and prior-week rates.
     """
-    ecu, hvc, granularity, errors = _get_filters()
+    ecu, hvc, granularity, tenure, errors = _get_filters()
     if errors:
         return jsonify({"error": errors}), 400
 
-    cache_key = f"i2a|{ecu}|{hvc}|{granularity}"
+    cache_key = f"i2a|{ecu}|{hvc}|{granularity}|{tenure}"
     cached, cache_ts, hit = _cache_get(cache_key)
     if hit:
         return jsonify(cached)
 
     period_expr_bu = _period_expr(granularity, "b.week")
+    tenure_filter = _tenure_where_clause(tenure)
 
     query = f"""
-    WITH base_user AS (
+    WITH base_user_raw AS (
         SELECT w.user_id, w.week,
                ecomm_level_end,
-               CAST(is_high_value AS STRING) AS is_high_value
+               CAST(is_high_value AS STRING) AS is_high_value,
+               DATE_DIFF(w.week, MIN(w.week) OVER (PARTITION BY w.user_id), DAY) AS tenure_days
         FROM `mc-analytics-devel.bi_product.user_dimensions_weekly_rollup` w
         WHERE w.week >= '2024-01-01'
           AND w.week < DATE_TRUNC(CURRENT_DATE, WEEK)
@@ -518,6 +553,10 @@ def get_i2a():
           AND {_ecu_clause(ecu, 'w')}
           AND {_hvc_clause(hvc, 'w', string_type=False)}
         GROUP BY ALL
+    ),
+    base_user AS (
+        SELECT user_id, week, ecomm_level_end, is_high_value
+        FROM base_user_raw WHERE 1=1 {tenure_filter}
     ),
 
     ra_views AS (
@@ -657,7 +696,7 @@ def get_i2a():
 @app.route("/api/engagement")
 def get_engagement():
     """Engagement breakdown by page — owned, supported, and combined."""
-    ecu, hvc, granularity, errors = _get_filters()
+    ecu, hvc, granularity, tenure, errors = _get_filters()
     if errors:
         return jsonify({"error": errors}), 400
 
@@ -745,7 +784,7 @@ def get_engagement():
 @app.route("/api/executive-summary")
 def get_executive_summary():
     """Executive summary — analytics engine produces 6-8 prioritized insight bullets."""
-    ecu, hvc, granularity, errors = _get_filters()
+    ecu, hvc, granularity, tenure, errors = _get_filters()
     if errors:
         return jsonify({"error": errors}), 400
 
@@ -789,12 +828,29 @@ def get_executive_summary():
 
     segments = analyze_segments(segment_data, rate_keys) if segment_data else []
 
+    # Fetch engagement data for funnel (RA_Engaged_Users)
+    ra_engaged = 0
+    try:
+        with app.test_request_context(
+            f"/api/engagement?ecu={ecu}&hvc={hvc}&granularity={granularity}&tenure={tenure}"
+        ):
+            eng_resp = get_engagement()
+            eng_data = json.loads(eng_resp.get_data())
+            eng_rows = eng_data.get("data", eng_data) if isinstance(eng_data, dict) else eng_data
+            if eng_rows:
+                latest_eng = eng_rows[-1]
+                combined = latest_eng.get("combined", {})
+                ra_engaged_entry = combined.get("RA Engaged (All)", {})
+                ra_engaged = ra_engaged_entry.get("users", 0)
+    except Exception:
+        pass  # Fall back to 0 if engagement fetch fails
+
     latest = metrics_data[-1] if metrics_data else {}
     funnel_data = {
         "active_users": latest.get("active_users", 0),
         "ra_viewed_users": latest.get("ra_active_users", 0),
         "ra_owned_users": latest.get("ra_owned_users", 0),
-        "ra_engaged_users": 0,
+        "ra_engaged_users": ra_engaged,
         "actions_taken_users": latest.get("actions_taken_users", 0),
     }
     funnel = compute_funnel(funnel_data)
