@@ -780,7 +780,7 @@ function renderExecSummary(summaryData, containerId, modeLabel) {
 // ═══════════════════════════════════════════════════════════════════════════════
 //  KPI GRID RENDERER (Page 1 — mini cards)
 // ═══════════════════════════════════════════════════════════════════════════════
-function renderKPIGrid(data, i2aData) {
+function renderKPIGrid(data, i2aData, adoptionMap) {
   const el = document.getElementById("kpi-grid-container");
   const noEcomm = state.ecu === "non_ecu";
 
@@ -796,9 +796,13 @@ function renderKPIGrid(data, i2aData) {
   const pwActionsPct = latest(i2aData, "pw_pct_actions_taken");
   const pyActionsPct = latest(i2aData, "py_pct_actions_taken");
 
-  const raTotal = latest(data, "pct_ra_total");
-  const pwRaTotal = latest(data, "pw_pct_ra_total");
-  const pyRaTotal = latest(data, "py_pct_ra_total");
+  // Adoption comes from /api/adoption (de-duplicated), not /api/metrics
+  const adoptionRows = [...adoptionMap.values()];
+  const latestAdoption = adoptionRows.length ? adoptionRows[adoptionRows.length - 1] : null;
+  const raTotal = latestAdoption?.pct_ra_total ?? null;
+  // No pw/py from adoption endpoint currently — show what's available
+  const pyRaTotal = null;
+  const pwRaTotal = null;
 
   el.innerHTML = `
     <div class="kpi-grid">
@@ -1460,7 +1464,7 @@ async function loadData() {
     if(!metricsData.length){document.getElementById("overview-charts").innerHTML="No data.";return;}
     renderExecSummary(summaryWoW,"exec-summary-wow","Week-over-Week");
     renderExecSummary(summaryYoY,"exec-summary-yoy","Year-over-Year");
-    renderKPIGrid(metricsData,i2aData); renderOverviewCharts(metricsData,adoptionMap,i2aData);
+    renderKPIGrid(metricsData,i2aData,adoptionMap); renderOverviewCharts(metricsData,adoptionMap,i2aData);
     renderI2ASection(i2aData); renderEngagementSection(engagementData);
     document.getElementById("adoption-section").innerHTML="";
     renderPageFunnels(funnelData);
