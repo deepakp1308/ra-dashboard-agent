@@ -188,6 +188,100 @@ FUNNEL_STAGES = [
 # ── Recommended Actions Templates ─────────────────────────────────────────────
 # Used by the executive summary generator to suggest concrete next steps.
 
+# ── Per-Page Funnel Configuration ─────────────────────────────────────────────
+# Maps each R&A page to its viewer metric, engaged metric, and ECS filter
+# for per-page I2A attribution.
+
+PAGE_FUNNEL_CONFIG = [
+    {
+        "label": "Marketing Dashboard",
+        "viewer_metric": "Marketing_Dashboard_Viewers",
+        "engaged_metric": "Marketing_Dashboard_Engaged",
+        "ecs_filter": """(
+            (scope_area = 'analytics' AND object_detail IN ('marketing_dashboard', 'email_dashboard'))
+            OR screen IN ('/analytics/marketing-dashboard','/analytics/marketing-dashboard/',
+                          'analytics/marketing-dashboard','analytics/marketing-dashboard/',
+                          '/analytics/email-dashboard/','analytics/email-dashboard','/analytics/email-dashboard')
+        ) AND screen NOT IN ('/') AND event = 'reporting:viewed'""",
+    },
+    {
+        "label": "Audience Analytics",
+        "viewer_metric": "Audience_analytic_viewers",
+        "engaged_metric": "Audience_analytic_Engaged",
+        "ecs_filter": """(
+            (scope_area = 'analytics' AND object_detail = 'audience_analytics')
+            OR screen IN ('/analytics/audience-analytics/','/analytics/audience-analytics','analytics/audience-analytics')
+        ) AND screen NOT IN ('/') AND event = 'reporting:viewed'""",
+    },
+    {
+        "label": "Conversion Dashboard (incl. Predictive Analytics)",
+        "viewer_metric": "Conversion_Insights_viewers",
+        "engaged_metric": "Conversion_Insights_Engaged",
+        "ecs_filter": """(
+            (scope_area IN ('business_analytics','subscription_management') AND object_detail IN ('conversion_insights','revenue_plans'))
+            OR screen LIKE '%analytics/conversion-insights%'
+        ) AND screen NOT IN ('/') AND event = 'reporting:viewed'""",
+    },
+    {
+        "label": "Email Report",
+        "viewer_metric": "Email_Report_Viewers",
+        "engaged_metric": "Email_Report_Engaged",
+        "ecs_filter": """(
+            (initiative_name = 'marketing_crm_analytics' AND scope_area = 'campaign_analytics'
+             AND object_detail IN ('email_overview_report','email_activity_bounced_report',
+                'email_ecomm_order_history_report','email_activity_sent_report',
+                'email_activity_unsubscribed_report','email_social_report',
+                'email_activity_opened_report','email_activity_clicked_report',
+                'email_ecomm_product_activity_report','email_click_performance_report',
+                'email_activity_complained_report','email_activity_not_opened_report'))
+            OR screen IN ('/analytics/report/overview','/reports/clicks','/reports/activity/open',
+                '/reports/activity/bounced','/reports/activity/unsubscribed','/reports/activity/sent',
+                '/reports/activity/clicked','/reports/activity/not-opened','reports/social-stats',
+                '/reports/ecommerce/history','/reports/activity/abuse','/reports/ecommerce/activity',
+                '/reports/summary','analytics/reports/overview','/reports/summary/',
+                '/analytics/reports/click-performance','/analytics/reports/recipient-activity')
+        ) AND event = 'reporting:viewed'""",
+    },
+    {
+        "label": "SMS Report",
+        "viewer_metric": "SmS_Report_Viewers",
+        "engaged_metric": "SmS_Report_Engaged",
+        "ecs_filter": """(
+            (scope_area = 'analytics' AND object_detail = 'sms_report')
+            OR screen IN ('analytics/sms','/analytics/sms')
+        ) AND event = 'reporting:viewed'""",
+    },
+    {
+        "label": "Custom Report",
+        "viewer_metric": "Custom_Report_Viewers",
+        "engaged_metric": "Custom_analytics_Engaged",
+        "ecs_filter": """(
+            (scope_area = 'analytics' AND object_detail = 'custom_reports')
+            OR screen IN ('analytics/custom-reports','/analytics/custom-reports','/analytics/custom-reports/',
+                '/analytics/reports/custom-reports/builder','/analytics/reports/custom-reports/',
+                'analytics/custom-reports/builder','analytics/custom-reports/graph/',
+                '/analytics/custom-reports/builder','/analytics/custom-reports/graph',
+                '/analytics/custom-reports/details','/analytics/reports/custom-reports')
+        ) AND screen NOT IN ('/') AND event = 'reporting:viewed'""",
+    },
+    {
+        "label": "Automation / Journey Report",
+        "viewer_metric": "Journey_Report_Viewers",
+        "engaged_metric": "CJB_Report_Engaged",
+        "ecs_filter": """(
+            (initiative_name = 'core_offerings' AND object_detail IN ('cjb_original_report','cjb_overview_report','customer_journey_builder_report'))
+            OR screen IN ('analytics/cjb_report','/customer-journey/report','customer_journey/report','customer-journey/report')
+        ) AND event = 'reporting:viewed'""",
+    },
+    {
+        "label": "MVT / Multivariate Report",
+        "viewer_metric": None,
+        "engaged_metric": None,
+        "ecs_filter": None,  # Not tracked in ECS
+    },
+]
+
+
 ACTION_TEMPLATES = {
     "declining_engagement": [
         "Increase campaign frequency targeting {segment} users",

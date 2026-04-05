@@ -15,6 +15,7 @@ from config import (
     ALL_ENGAGEMENT_METRICS,
     ENGAGEMENT_TAXONOMY,
     METRIC_DISPLAY,
+    PAGE_FUNNEL_CONFIG,
 )
 from analytics import (
     compute_trends,
@@ -779,6 +780,187 @@ def get_engagement():
 
     _cache_set(cache_key, result)
     return _make_response(result)
+
+
+@app.route("/api/page-funnel")
+def get_page_funnel():
+    """
+    Per-page funnel: Views → Engaged → I2A (7-day) for each R&A page.
+    Views + Engaged from report table (fast). Per-page I2A from raw ECS (slow, cached).
+    """
+    ecu, hvc, granularity, tenure, errors = _get_filters()
+    if errors:
+        return jsonify({"error": errors}), 400
+
+    cache_key = f"page_funnel|{ecu}|{hvc}|{granularity}|{tenure}"
+    cached, cache_ts, hit = _cache_get(cache_key)
+    if hit:
+        return jsonify(cached)
+
+    # ── Part 1: Views + Engaged from report table (fast) ─────────────────
+    pages_with_metrics = [p for p in PAGE_FUNNEL_CONFIG if p["viewer_metric"]]
+    viewer_metrics = [p["viewer_metric"] for p in pages_with_metrics]
+    engaged_metrics = [p["engaged_metric"] for p in pages_with_metrics if p["engaged_metric"]]
+    all_metrics = viewer_metrics + engaged_metrics
+    metrics_sql = _metrics_in_clause(all_metrics)
+
+    views_query = f"""
+    SELECT
+        {_period_expr(granularity)} AS period_start,
+        metric_name,
+        SUM(metric_value) AS val,
+        SUM(denominator) AS denom,
+        SUM(COALESCE(py, 0)) AS py_val,
+        SUM(COALESCE(pw, 0)) AS pw_val
+    FROM `{TABLE}`
+    WHERE metric_name IN ({metrics_sql})
+      AND {_ecu_clause(ecu)}
+      AND {_hvc_clause(hvc)}
+    GROUP BY 1, 2
+    ORDER BY 1
+    """
+
+    views_rows, err = _run_query(views_query, "page_funnel_views")
+    if err:
+        return jsonify({"error": f"BigQuery error: {err}"}), 503
+
+    # Build lookup: {period: {metric_name: {val, pw_val, py_val, denom}}}
+    views_lookup = {}
+    for r in views_rows:
+        ps = r["period_start"]
+        if ps not in views_lookup:
+            views_lookup[ps] = {}
+        views_lookup[ps][r["metric_name"]] = {
+            "val": r["val"] or 0,
+            "pw_val": r["pw_val"] or 0,
+            "py_val": r["py_val"] or 0,
+            "denom": r["denom"] or 0,
+        }
+
+    # ── Part 2: Per-page I2A from raw ECS (slower) ───────────────────────
+    # Build UNION ALL of per-page view CTEs
+    page_view_unions = []
+    for p in pages_with_metrics:
+        if not p.get("ecs_filter"):
+            continue
+        page_view_unions.append(f"""
+        SELECT user_id, DATE_TRUNC(DATE(timestamp), WEEK) AS week,
+               '{p["label"]}' AS page_name,
+               MIN(DATE(timestamp)) AS first_view
+        FROM `mc-business-intelligence.bi_activities.ecs_users_activities`
+        WHERE DATE(timestamp) >= '2024-01-01' AND ({p["ecs_filter"]})
+        GROUP BY user_id, week, page_name""")
+
+    if not page_view_unions:
+        return jsonify([])
+
+    tenure_filter = _tenure_where_clause(tenure)
+    period_expr_bu = _period_expr(granularity, "pv.week")
+
+    i2a_query = f"""
+    WITH base_user_raw AS (
+        SELECT w.user_id, w.week,
+               DATE_DIFF(w.week, MIN(w.week) OVER (PARTITION BY w.user_id), DAY) AS tenure_days
+        FROM `mc-analytics-devel.bi_product.user_dimensions_weekly_rollup` w
+        WHERE w.week >= '2024-01-01'
+          AND w.week < DATE_TRUNC(CURRENT_DATE, WEEK)
+          AND w.wau AND w.is_high_value IS NOT NULL
+          AND {_ecu_clause(ecu, 'w')}
+          AND {_hvc_clause(hvc, 'w', string_type=False)}
+        GROUP BY ALL
+    ),
+    base_user AS (
+        SELECT user_id, week FROM base_user_raw WHERE 1=1 {tenure_filter}
+    ),
+    per_page_views AS (
+        {' UNION ALL '.join(page_view_unions)}
+    ),
+    campaigns AS (
+        SELECT user_id, DATE(created_at) AS created_at,
+               COUNT(DISTINCT CONCAT(user_id, campaign_id)) AS cnt
+        FROM `mc-business-intelligence.bi_reporting.emails_bulk`
+        WHERE DATE(created_at) >= '2024-01-01'
+        GROUP BY 1, 2
+    ),
+    per_page_i2a AS (
+        SELECT
+            {period_expr_bu} AS period_start,
+            pv.page_name,
+            COUNT(DISTINCT pv.user_id) AS i2a_users,
+            SUM(c.cnt) AS i2a_campaigns
+        FROM per_page_views pv
+        INNER JOIN base_user b ON pv.user_id = b.user_id AND pv.week = b.week
+        LEFT JOIN campaigns c ON pv.user_id = c.user_id
+            AND c.created_at >= pv.first_view
+            AND DATE_DIFF(c.created_at, pv.first_view, DAY) <= {I2A_WINDOW_DAYS}
+            AND c.cnt > 0
+        WHERE c.user_id IS NOT NULL
+        GROUP BY 1, 2
+    )
+    SELECT period_start, page_name, i2a_users, i2a_campaigns
+    FROM per_page_i2a
+    ORDER BY 1, 2
+    """
+
+    i2a_rows, err = _run_query(i2a_query, f"page_funnel_i2a(tenure={tenure})")
+    if err:
+        logger.warning(f"Per-page I2A query failed: {err}")
+        i2a_rows = []
+
+    # Build I2A lookup: {period: {page_name: {i2a_users, i2a_campaigns}}}
+    i2a_lookup = {}
+    for r in i2a_rows:
+        ps = r["period_start"]
+        if ps not in i2a_lookup:
+            i2a_lookup[ps] = {}
+        i2a_lookup[ps][r["page_name"]] = {
+            "i2a_users": r["i2a_users"] or 0,
+            "i2a_campaigns": r["i2a_campaigns"] or 0,
+        }
+
+    # ── Combine into response ────────────────────────────────────────────
+    periods = sorted(set(list(views_lookup.keys()) + list(i2a_lookup.keys())))
+    result = []
+    for ps in periods:
+        period_data = {"period_start": ps, "pages": []}
+        vl = views_lookup.get(ps, {})
+        il = i2a_lookup.get(ps, {})
+
+        for p in PAGE_FUNNEL_CONFIG:
+            page_entry = {"label": p["label"], "has_data": p["viewer_metric"] is not None}
+
+            if not page_entry["has_data"]:
+                page_entry.update({"viewers": None, "engaged": None, "i2a_users": None})
+                period_data["pages"].append(page_entry)
+                continue
+
+            v = vl.get(p["viewer_metric"], {})
+            e = vl.get(p["engaged_metric"], {}) if p["engaged_metric"] else {}
+            i = il.get(p["label"], {})
+            denom = v.get("denom", 0)
+
+            page_entry.update({
+                "viewers": v.get("val", 0),
+                "viewers_pw": v.get("pw_val", 0),
+                "viewers_py": v.get("py_val", 0),
+                "engaged": e.get("val", 0),
+                "engaged_pw": e.get("pw_val", 0),
+                "engaged_py": e.get("py_val", 0),
+                "i2a_users": i.get("i2a_users", 0),
+                "i2a_campaigns": i.get("i2a_campaigns", 0),
+                "denom": denom,
+                "view_rate": round(v.get("val", 0) / denom * 100, 2) if denom else 0,
+                "engage_rate": round(e.get("val", 0) / denom * 100, 2) if denom else 0,
+                "i2a_rate": round(i.get("i2a_users", 0) / denom * 100, 2) if denom else 0,
+                "view_to_engage": round(e.get("val", 0) / v.get("val", 1) * 100, 1) if v.get("val") else 0,
+                "view_to_i2a": round(i.get("i2a_users", 0) / v.get("val", 1) * 100, 1) if v.get("val") else 0,
+            })
+            period_data["pages"].append(page_entry)
+
+        result.append(period_data)
+
+    _cache_set(cache_key, result)
+    return jsonify(result)
 
 
 @app.route("/api/executive-summary")
