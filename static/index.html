@@ -1146,21 +1146,38 @@ function renderEngagementSection(engData) {
 
   const latestEng = engData[engData.length - 1];
 
-  function makeTable(pageData, title) {
+  // Find period ~1 month ago for MoM calculation
+  // For monthly granularity: previous entry. For weekly: ~4 entries back.
+  const isMonthly = state.granularity === "monthly";
+  const momOffset = isMonthly ? 1 : 4;
+  const momEng = engData.length > momOffset ? engData[engData.length - 1 - momOffset] : null;
+
+  function makeTable(pageData, title, section) {
     if (!pageData || !Object.keys(pageData).length) return `<div style="padding:12px;color:var(--muted);font-size:13px;">No data for ${title}.</div>`;
     const entries = Object.entries(pageData).sort((a, b) => (b[1].users || 0) - (a[1].users || 0));
+
+    // Get prior-month data for MoM
+    const momSection = momEng
+      ? (section === "all" ? {...(momEng.owned || {}), ...(momEng.supported || {})} : (momEng[section] || {}))
+      : {};
+
     return `
       <table class="eng-table">
-        <thead><tr><th>Page</th><th>Users</th><th>% of WAU</th><th>Δ WoW</th><th>Δ YoY</th></tr></thead>
+        <thead><tr><th>Page</th><th>Users</th><th>% of WAU</th><th>Δ WoW</th><th>Δ MoM</th><th>Δ YoY</th></tr></thead>
         <tbody>
           ${entries.map(([name, d]) => {
             const pwPct = d.denominator > 0 && d.pw_users ? (d.pw_users / d.denominator * 100) : null;
             const pyPct = d.denominator > 0 && d.py_users ? (d.py_users / d.denominator * 100) : null;
+            // MoM: find same page in prior-month data
+            const momPage = momSection[name];
+            const momDenom = momPage?.denominator || 0;
+            const momPct = momDenom > 0 && momPage?.users ? (momPage.users / momDenom * 100) : null;
             return `<tr>
               <td style="font-weight:500;">${name}</td>
               <td>${fmtCount(d.users)}</td>
               <td>${fmtPct(d.rate)}</td>
               <td>${_oneDelta(d.rate, pwPct, "WoW")}</td>
+              <td>${_oneDelta(d.rate, momPct, "MoM")}</td>
               <td>${_oneDelta(d.rate, pyPct, "YoY")}</td>
             </tr>`;
           }).join("")}
@@ -1196,7 +1213,7 @@ function renderEngagementSection(engData) {
         </div>
       </div>
       <div id="eng-table-container" style="padding: 0 24px 16px;">
-        ${makeTable({...latestEng.owned, ...latestEng.supported}, "All")}
+        ${makeTable({...latestEng.owned, ...latestEng.supported}, "All", "all")}
       </div>
       <div class="glossary">
         <button class="glossary-toggle" onclick="toggleGlossary(this)">▶ Data Sources & Formulas</button>
@@ -1207,7 +1224,7 @@ function renderEngagementSection(engData) {
           <strong>Owned Assets:</strong> Marketing Dashboard, Audience Analytics, Conversion Insights, Custom Reports, Reports, SMS Report, Email Report, Journey Report, Replicated.<br>
           <strong>Supported Pages:</strong> Homepage, All Campaigns, All Journeys, Automation Overview, All Contacts, Audience Dashboard, Audience Segments, SMS Overview.<br>
           <strong>Engaged:</strong> Users with non-view interaction events (<code>event NOT LIKE '%viewed%'</code>).<br>
-          <strong>Δ WoW:</strong> Change vs prior week. <strong>Δ YoY:</strong> Change vs same period prior year. Both from LAG() in report table.
+          <strong>Δ WoW:</strong> Change vs prior week. <strong>Δ MoM:</strong> Change vs ~1 month ago (4 weeks for weekly, 1 period for monthly). <strong>Δ YoY:</strong> Change vs same period prior year.
         </div>
       </div>
     </div>
@@ -1221,15 +1238,15 @@ function renderEngagementSection(engData) {
       const mode = tab.dataset.eng;
       const container = document.getElementById("eng-table-container");
       if (mode === "all") {
-        container.innerHTML = makeTable({...latestEng.owned, ...latestEng.supported}, "All");
+        container.innerHTML = makeTable({...latestEng.owned, ...latestEng.supported}, "All", "all");
       } else if (mode === "owned") {
-        container.innerHTML = makeTable(latestEng.owned, "Owned");
+        container.innerHTML = makeTable(latestEng.owned, "Owned", "owned");
       } else if (mode === "supported") {
-        container.innerHTML = makeTable(latestEng.supported, "Supported");
+        container.innerHTML = makeTable(latestEng.supported, "Supported", "supported");
       } else if (mode === "owned_engaged") {
-        container.innerHTML = makeTable(latestEng.owned_engaged, "Owned Engaged");
+        container.innerHTML = makeTable(latestEng.owned_engaged, "Owned Engaged", "owned_engaged");
       } else if (mode === "supported_engaged") {
-        container.innerHTML = makeTable(latestEng.supported_engaged, "Supported Engaged");
+        container.innerHTML = makeTable(latestEng.supported_engaged, "Supported Engaged", "supported_engaged");
       }
     });
   });
@@ -1246,9 +1263,7 @@ function renderPageFunnels(funnelData) {
     return;
   }
 
-  // Use latest period
   const latest = funnelData[funnelData.length - 1];
-  const prev = funnelData.length >= 2 ? funnelData[funnelData.length - 2] : null;
   const pages = latest.pages || [];
 
   function pctDelta(cur, prior) {
@@ -1260,41 +1275,44 @@ function renderPageFunnels(funnelData) {
   }
 
   el.innerHTML = `
-    <div class="section-title" style="margin-top:0;">Per-Page Funnel: Views → Engaged → I2A (7-day)</div>
+    <div class="section-title" style="margin-top:0;">Per-Page Funnel: Views → Insight to Action (7-day)</div>
     <div class="metric-card">
       <div style="padding:16px 24px; overflow-x:auto;">
-        <table class="eng-table" style="min-width:900px;">
+        <table class="eng-table" style="min-width:700px;">
           <thead>
             <tr>
-              <th style="min-width:200px;">Page</th>
+              <th style="min-width:220px;">Page</th>
               <th>Views</th>
               <th>Δ WoW</th>
               <th>Δ YoY</th>
-              <th>Engaged</th>
-              <th>Δ WoW</th>
-              <th>Δ YoY</th>
               <th>I2A Users</th>
-              <th>View→Engage</th>
-              <th>View→I2A</th>
+              <th>I2A Campaigns</th>
+              <th>View → I2A Rate</th>
             </tr>
           </thead>
           <tbody>
-            ${pages.map((p, i) => {
+            ${pages.map(p => {
               if (!p.has_data) {
                 return `<tr style="opacity:0.4;"><td style="font-weight:600;">${p.label}</td>
-                  <td colspan="9" style="text-align:center;font-style:italic;color:var(--muted);">Not tracked in ECS</td></tr>`;
+                  <td colspan="6" style="text-align:center;font-style:italic;color:var(--muted);">Not tracked in ECS</td></tr>`;
               }
+              const convRate = p.view_to_i2a || 0;
+              const barColor = convRate >= 70 ? '#1a8a4a' : convRate >= 40 ? '#111' : '#c42b2b';
               return `<tr>
                 <td style="font-weight:600;">${p.label}</td>
                 <td>${fmtCount(p.viewers)}</td>
                 <td>${pctDelta(p.viewers, p.viewers_pw)}</td>
                 <td>${pctDelta(p.viewers, p.viewers_py)}</td>
-                <td>${fmtCount(p.engaged)}</td>
-                <td>${pctDelta(p.engaged, p.engaged_pw)}</td>
-                <td>${pctDelta(p.engaged, p.engaged_py)}</td>
                 <td>${fmtCount(p.i2a_users)}</td>
-                <td><strong>${p.view_to_engage?.toFixed(1) || 0}%</strong></td>
-                <td><strong>${p.view_to_i2a?.toFixed(1) || 0}%</strong></td>
+                <td>${fmtCount(p.i2a_campaigns)}</td>
+                <td>
+                  <div style="display:flex;align-items:center;gap:6px;">
+                    <div style="flex:1;background:#f1f5f9;border-radius:3px;height:16px;min-width:60px;">
+                      <div style="width:${Math.min(convRate, 100)}%;height:100%;background:${barColor};border-radius:3px;"></div>
+                    </div>
+                    <strong style="min-width:40px;">${convRate.toFixed(1)}%</strong>
+                  </div>
+                </td>
               </tr>`;
             }).join("")}
           </tbody>
@@ -1303,51 +1321,14 @@ function renderPageFunnels(funnelData) {
       <div class="glossary">
         <button class="glossary-toggle" onclick="toggleGlossary(this)">▶ How this is calculated</button>
         <div class="glossary-body">
-          <strong>Views:</strong> Users who fired <code>reporting:viewed</code> on that specific page.<br>
-          <strong>Engaged:</strong> Users who interacted (filter, click) beyond just viewing.<br>
-          <strong>I2A Users:</strong> Users who created a campaign within <strong>7 days</strong> of viewing that specific page.<br>
-          <strong>View→Engage:</strong> Engaged / Views × 100 (engagement conversion).<br>
-          <strong>View→I2A:</strong> I2A Users / Views × 100 (action conversion).<br>
-          <strong>Δ WoW / YoY:</strong> % change in user count vs prior week / prior year.
+          <strong>Views:</strong> Distinct users who fired <code>reporting:viewed</code> on that specific page. Source: <code>ecs_users_activities</code>.<br>
+          <strong>I2A Users:</strong> Users who created a campaign within <strong>7 days</strong> of viewing that specific page. Source: <code>emails_bulk</code> joined to page-specific ECS views.<br>
+          <strong>I2A Campaigns:</strong> Total campaigns created by those I2A users within the 7-day window.<br>
+          <strong>View → I2A Rate:</strong> I2A Users ÷ Views × 100. Green ≥70%, black 40-70%, red <40%.<br>
+          <strong>Δ WoW / YoY:</strong> % change in view count vs prior week / prior year.
         </div>
       </div>
     </div>
-
-    ${pages.filter(p => p.has_data && p.viewers > 0).map(p => `
-      <div class="metric-card" style="margin-top:12px;">
-        <div style="padding:14px 24px 12px;">
-          <div style="font-weight:600;font-size:13px;margin-bottom:8px;">${p.label}</div>
-          <div style="display:flex;gap:8px;align-items:center;">
-            <div style="flex:1;">
-              <div style="background:var(--border);border-radius:4px;height:24px;position:relative;overflow:hidden;">
-                <div style="height:100%;width:100%;background:#111;border-radius:4px;display:flex;align-items:center;padding-left:8px;font-size:10px;font-weight:600;color:#fff;">
-                  Views: ${fmtCount(p.viewers)}
-                </div>
-              </div>
-            </div>
-            <div style="flex:${(p.view_to_engage || 0) / 100};min-width:40px;">
-              <div style="background:var(--border);border-radius:4px;height:24px;position:relative;overflow:hidden;">
-                <div style="height:100%;width:100%;background:#555;border-radius:4px;display:flex;align-items:center;padding-left:8px;font-size:10px;font-weight:600;color:#fff;">
-                  Eng: ${fmtCount(p.engaged)}
-                </div>
-              </div>
-            </div>
-            <div style="flex:${(p.view_to_i2a || 0) / 100};min-width:40px;">
-              <div style="background:var(--border);border-radius:4px;height:24px;position:relative;overflow:hidden;">
-                <div style="height:100%;width:100%;background:#999;border-radius:4px;display:flex;align-items:center;padding-left:8px;font-size:10px;font-weight:600;color:#fff;">
-                  I2A: ${fmtCount(p.i2a_users)}
-                </div>
-              </div>
-            </div>
-          </div>
-          <div style="display:flex;gap:16px;margin-top:6px;font-size:11px;color:var(--muted);">
-            <span>View→Engage: <strong>${p.view_to_engage?.toFixed(1)}%</strong></span>
-            <span>View→I2A: <strong>${p.view_to_i2a?.toFixed(1)}%</strong></span>
-            <span>Engage→I2A: <strong>${p.engaged > 0 ? (p.i2a_users / p.engaged * 100).toFixed(1) : 0}%</strong></span>
-          </div>
-        </div>
-      </div>
-    `).join("")}
 
     <!-- Auto-generated Insights & Recommendations -->
     ${generateFunnelInsights(pages)}
@@ -1361,29 +1342,31 @@ function generateFunnelInsights(pages) {
   const insights = [];
   const recs = [];
 
-  // Top I2A converter
+  // Sort by View→I2A conversion
   const byI2A = [...active].sort((a, b) => (b.view_to_i2a || 0) - (a.view_to_i2a || 0));
-  if (byI2A[0]?.view_to_i2a > 0) {
-    insights.push(`<strong>${byI2A[0].label}</strong> has the highest View→I2A conversion at <strong>${byI2A[0].view_to_i2a.toFixed(1)}%</strong> — users who view this page are most likely to take action.`);
-  }
-
-  // Lowest I2A converter (with meaningful views)
-  const byI2ALow = active.filter(p => p.viewers > 1000).sort((a, b) => (a.view_to_i2a || 999) - (b.view_to_i2a || 999));
-  if (byI2ALow[0] && byI2ALow[0].view_to_i2a < byI2A[0]?.view_to_i2a) {
-    insights.push(`<strong>${byI2ALow[0].label}</strong> has the lowest View→I2A at <strong>${(byI2ALow[0].view_to_i2a || 0).toFixed(1)}%</strong> despite ${fmtCount(byI2ALow[0].viewers)} views — opportunity to improve conversion.`);
-  }
-
-  // Highest engagement rate
-  const byEngage = [...active].filter(p => p.engaged > 0).sort((a, b) => (b.view_to_engage || 0) - (a.view_to_engage || 0));
-  if (byEngage[0]) {
-    insights.push(`<strong>${byEngage[0].label}</strong> leads in engagement with <strong>${byEngage[0].view_to_engage.toFixed(1)}%</strong> View→Engage — users actively interact beyond viewing.`);
-  }
-
-  // Most viewed page
+  const byI2ALow = [...active].filter(p => p.viewers > 1000).sort((a, b) => (a.view_to_i2a || 999) - (b.view_to_i2a || 999));
   const byViews = [...active].sort((a, b) => b.viewers - a.viewers);
-  insights.push(`<strong>${byViews[0].label}</strong> is the most viewed page with <strong>${fmtCount(byViews[0].viewers)}</strong> users.`);
 
-  // YoY growth/decline
+  // Top I2A converter
+  if (byI2A[0]?.view_to_i2a > 0) {
+    insights.push(`<strong>${byI2A[0].label}</strong> has the highest View→I2A rate at <strong>${byI2A[0].view_to_i2a.toFixed(1)}%</strong> — ${fmtCount(byI2A[0].i2a_users)} users took action after viewing.`);
+  }
+
+  // Lowest I2A converter
+  if (byI2ALow[0] && byI2ALow[0].view_to_i2a < byI2A[0]?.view_to_i2a) {
+    insights.push(`<strong>${byI2ALow[0].label}</strong> has the lowest View→I2A at <strong>${(byI2ALow[0].view_to_i2a || 0).toFixed(1)}%</strong> with ${fmtCount(byI2ALow[0].viewers)} views — high reach but low conversion.`);
+  }
+
+  // Most viewed
+  insights.push(`<strong>${byViews[0].label}</strong> is the most viewed page with <strong>${fmtCount(byViews[0].viewers)}</strong> users, converting <strong>${(byViews[0].view_to_i2a || 0).toFixed(1)}%</strong> to action.`);
+
+  // Total I2A opportunity
+  const totalViews = active.reduce((s, p) => s + (p.viewers || 0), 0);
+  const totalI2A = active.reduce((s, p) => s + (p.i2a_users || 0), 0);
+  const avgRate = totalViews > 0 ? (totalI2A / totalViews * 100) : 0;
+  insights.push(`Across all pages: <strong>${fmtCount(totalI2A)}</strong> users took action out of <strong>${fmtCount(totalViews)}</strong> total views (<strong>${avgRate.toFixed(1)}%</strong> average View→I2A rate).`);
+
+  // YoY growth/decline in views
   const yoyGrowth = active.filter(p => p.viewers_py > 0).map(p => ({
     ...p, yoy_pct: ((p.viewers - p.viewers_py) / p.viewers_py * 100)
   })).sort((a, b) => b.yoy_pct - a.yoy_pct);
@@ -1393,24 +1376,30 @@ function generateFunnelInsights(pages) {
   if (yoyGrowth.length > 1) {
     const worst = yoyGrowth[yoyGrowth.length - 1];
     if (worst.yoy_pct < -5) {
-      insights.push(`<strong>${worst.label}</strong> declined <strong>${worst.yoy_pct.toFixed(0)}% YoY</strong> in views — investigate root cause.`);
+      insights.push(`<strong>${worst.label}</strong> declined <strong>${worst.yoy_pct.toFixed(0)}% YoY</strong> in views — needs investigation.`);
     }
   }
 
-  // Recommendations
-  if (byI2ALow[0] && byI2ALow[0].view_to_i2a < 20) {
-    recs.push(`Add in-page prompts or CTAs on <strong>${byI2ALow[0].label}</strong> to drive campaign creation after viewing.`);
+  // Recommendations based on conversion gaps
+  if (byI2ALow[0] && byI2A[0]) {
+    const gap = (byI2A[0].view_to_i2a || 0) - (byI2ALow[0].view_to_i2a || 0);
+    if (gap > 10) {
+      recs.push(`Close the <strong>${gap.toFixed(0)}pp conversion gap</strong> between ${byI2A[0].label} (${byI2A[0].view_to_i2a?.toFixed(1)}%) and ${byI2ALow[0].label} (${byI2ALow[0].view_to_i2a?.toFixed(1)}%) — add campaign creation CTAs to low-converting pages.`);
+    }
   }
-  if (byEngage[0] && byI2A[0] && byEngage[0].label !== byI2A[0].label) {
-    recs.push(`Investigate why <strong>${byEngage[0].label}</strong> has high engagement but isn't the top I2A converter — the engagement may not lead to action.`);
+  // High-volume low-conversion pages
+  const highVolLowConv = active.filter(p => p.viewers > 50000 && (p.view_to_i2a || 0) < avgRate);
+  if (highVolLowConv.length) {
+    recs.push(`Focus on <strong>${highVolLowConv.map(p => p.label).join(", ")}</strong> — high traffic but below-average conversion. Small % improvements here have outsized impact.`);
   }
+  // YoY declining pages
   if (yoyGrowth.length) {
     const declining = yoyGrowth.filter(p => p.yoy_pct < -10);
     if (declining.length) {
-      recs.push(`Prioritize revitalizing <strong>${declining.map(p => p.label).join(", ")}</strong> — declining >10% YoY.`);
+      recs.push(`Investigate declining viewership on <strong>${declining.map(p => p.label).join(", ")}</strong> (down >10% YoY) — consider refresh or feature improvements.`);
     }
   }
-  recs.push(`Run A/B tests on page layouts for the lowest-converting pages to improve View→I2A rates.`);
+  recs.push(`A/B test page layouts and in-page prompts on lowest-converting pages to lift View→I2A rates.`);
 
   return `
     <div class="metric-card" style="margin-top:16px;">
