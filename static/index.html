@@ -1,0 +1,1189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>R&A Executive Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+/* ── Intuit / QBO FY27 Design System ─────────────────────────────────────── */
+:root {
+  --sidebar:      #162251;
+  --bg:           #f0f4f8;
+  --card:         #ffffff;
+  --border:       #e8edf5;
+  --shadow:       0 1px 4px rgba(26,40,96,0.08);
+  --text:         #1a1f36;
+  --muted:        #6b7c93;
+  --accent:       #0070d2;
+  --ai-teal:      #00b9a9;
+  --ai-teal-bg:   rgba(0,185,169,0.08);
+  --green:        #1aab68;
+  --green-bg:     #dcfce7;
+  --red:          #d13438;
+  --red-bg:       #fee2e2;
+  --amber:        #f59e0b;
+  --amber-bg:     #fffbeb;
+  --chart-navy:   #1e3a6e;
+  --chart-blue:   #4472c4;
+  --chart-teal:   #00b9a9;
+  --chart-pink:   #f4809b;
+  --py-color:     #94a3b8;
+  --radius:       8px;
+  --font:         'Avenir Next', -apple-system, 'Helvetica Neue', Arial, sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); font-family: var(--font); color: var(--text); min-height: 100vh; }
+
+/* ── Header ── */
+.header {
+  background: var(--sidebar);
+  color: #fff;
+  padding: 16px 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.header-left { display: flex; align-items: center; gap: 12px; }
+.header-left h1 { font-size: 18px; font-weight: 700; letter-spacing: -.3px; }
+.header-left p  { font-size: 12px; color: rgba(255,255,255,.5); margin-top: 2px; }
+.header-right   { font-size: 11px; color: rgba(255,255,255,.35); text-align: right; line-height: 1.7; }
+
+/* ── Tab navigation ── */
+.tabs {
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  padding: 0 32px;
+  display: flex;
+  gap: 0;
+}
+.tab-btn {
+  padding: 12px 20px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all .15s;
+  font-family: var(--font);
+}
+.tab-btn:hover { color: var(--accent); }
+.tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* ── Filter bar ── */
+.filters {
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  padding: 10px 32px;
+  display: flex;
+  gap: 24px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.filter-group       { display: flex; align-items: center; gap: 5px; }
+.filter-group label { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; white-space: nowrap; }
+.filter-btn {
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  background: #fff;
+  border-radius: 99px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  color: var(--muted);
+  transition: all .15s;
+  font-family: var(--font);
+}
+.filter-btn:hover  { border-color: var(--accent); color: var(--accent); }
+.filter-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.filter-btn.disabled {
+  opacity: .4; cursor: not-allowed; pointer-events: none;
+}
+
+/* ── Main layout ── */
+.main { max-width: 1360px; margin: 0 auto; padding: 20px 32px; }
+.page { display: none; }
+.page.active { display: block; }
+
+/* ── States ── */
+.state-box {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 200px; color: var(--muted); font-size: 14px; gap: 10px;
+}
+.spinner {
+  width: 18px; height: 18px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Executive Summary Banner ── */
+.exec-summary {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  margin-bottom: 20px;
+  overflow: hidden;
+}
+.exec-header {
+  padding: 16px 24px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.exec-header .ai-icon { font-size: 20px; color: var(--ai-teal); }
+.exec-header h2 { font-size: 16px; font-weight: 600; }
+.exec-header .period-badge {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--bg);
+  padding: 3px 10px;
+  border-radius: 99px;
+}
+.exec-chips {
+  display: flex; gap: 6px; padding: 10px 24px 0;
+}
+.exec-chip {
+  padding: 3px 10px; border-radius: 99px;
+  font-size: 11px; font-weight: 600;
+  cursor: pointer; border: 1px solid var(--border);
+  background: var(--bg); color: var(--muted);
+  transition: all .15s;
+}
+.exec-chip.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.exec-chip[data-cat="trend"] { }
+.exec-chip[data-cat="anomaly"] { }
+.exec-chip[data-cat="opportunity"] { }
+.exec-chip[data-cat="threat"] { }
+.exec-chip[data-cat="action"] { }
+.exec-bullets {
+  padding: 14px 24px 18px;
+  list-style: none;
+}
+.exec-bullet {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 8px 0;
+  font-size: 13px;
+  line-height: 1.5;
+  border-bottom: 1px solid #f1f5f9;
+}
+.exec-bullet:last-child { border-bottom: none; }
+.bullet-icon {
+  flex-shrink: 0;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700;
+  margin-top: 1px;
+}
+.bullet-icon.trend     { background: var(--ai-teal-bg); color: var(--ai-teal); }
+.bullet-icon.anomaly   { background: var(--amber-bg); color: var(--amber); }
+.bullet-icon.opportunity { background: var(--green-bg); color: var(--green); }
+.bullet-icon.threat    { background: var(--red-bg); color: var(--red); }
+.bullet-icon.action    { background: #eff6ff; color: var(--accent); }
+.bullet-cat {
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px;
+  color: var(--muted); min-width: 80px; padding-top: 2px;
+}
+
+/* ── Metric card ── */
+.metric-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+.card-top { padding: 16px 24px 0; }
+.card-title    { font-size: 14px; font-weight: 600; }
+.card-subtitle { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.kpi-row {
+  padding: 10px 24px 0;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.kpi-value   { font-size: 32px; font-weight: 700; letter-spacing: -1px; }
+.kpi-delta {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 2px 8px; border-radius: 99px;
+  font-size: 11px; font-weight: 600;
+}
+.kpi-delta.up   { background: var(--green-bg); color: var(--green); }
+.kpi-delta.down { background: var(--red-bg);   color: var(--red); }
+.kpi-delta.flat { background: #f1f5f9;         color: var(--muted); }
+.kpi-context    { font-size: 12px; color: var(--muted); }
+
+/* ── KPI grid (4 cols) ── */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.kpi-mini {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 16px 20px;
+}
+.kpi-mini-label { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .3px; margin-bottom: 6px; }
+.kpi-mini-value { font-size: 28px; font-weight: 700; letter-spacing: -.8px; }
+.kpi-mini-delta { margin-top: 4px; }
+
+/* ── Chart ── */
+.chart-legend {
+  display: flex; gap: 16px; padding: 10px 24px 0;
+}
+.legend-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); }
+.leg-line           { width: 20px; height: 2px; border-radius: 1px; }
+.leg-line.current   { background: var(--chart-navy); }
+.leg-line.prior     { background: var(--py-color); background: repeating-linear-gradient(90deg, var(--py-color) 0, var(--py-color) 4px, transparent 4px, transparent 8px); }
+.leg-line.owned     { background: var(--chart-navy); }
+.leg-line.supported { background: var(--chart-blue); }
+.chart-wrap { padding: 10px 20px 14px; height: 200px; position: relative; }
+
+/* ── Glossary ── */
+.glossary        { border-top: 1px solid var(--border); background: #f9fafb; }
+.glossary-toggle {
+  width: 100%; text-align: left;
+  padding: 8px 24px;
+  background: none; border: none; cursor: pointer;
+  font-size: 11px; font-weight: 600; color: var(--accent);
+  text-transform: uppercase; letter-spacing: .4px;
+  display: flex; align-items: center; gap: 5px;
+  font-family: var(--font);
+}
+.glossary-body {
+  display: none;
+  padding: 0 24px 12px;
+  font-size: 12px; color: var(--muted); line-height: 1.7;
+}
+.glossary-body.open { display: block; }
+.glossary-body strong { color: var(--text); font-weight: 600; }
+.glossary-body code  { background: var(--border); padding: 1px 5px; border-radius: 3px; font-size: 11px; }
+
+/* ── N/A note ── */
+.na-note {
+  background: var(--amber-bg);
+  border-left: 3px solid var(--amber);
+  padding: 8px 12px;
+  margin: 0 24px 10px;
+  font-size: 12px;
+  color: #92400e;
+  border-radius: 0 4px 4px 0;
+}
+
+/* ── Section headings ── */
+.section-title {
+  font-size: 16px; font-weight: 600; margin: 24px 0 12px;
+  display: flex; align-items: center; gap: 8px;
+}
+.section-title .ai-icon { color: var(--ai-teal); }
+
+/* ── I2A Breakdown Table ── */
+.i2a-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.i2a-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  padding: 8px 16px;
+  border-bottom: 2px solid var(--border);
+}
+.i2a-table td {
+  padding: 10px 16px;
+  border-bottom: 1px solid #f1f5f9;
+}
+.i2a-table tr:last-child td { border-bottom: none; }
+.i2a-table .action-name { font-weight: 600; }
+.i2a-table .coming-soon { color: var(--muted); font-style: italic; }
+
+/* ── Engagement Breakdown ── */
+.eng-tabs {
+  display: flex; gap: 0; margin-bottom: 12px;
+}
+.eng-tab {
+  padding: 8px 16px;
+  background: none; border: 1px solid var(--border);
+  font-size: 12px; font-weight: 600; color: var(--muted);
+  cursor: pointer; transition: all .15s;
+  font-family: var(--font);
+}
+.eng-tab:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+.eng-tab:last-child  { border-radius: 0 var(--radius) var(--radius) 0; }
+.eng-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.eng-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.eng-table th {
+  text-align: left; font-size: 11px; font-weight: 600; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .4px;
+  padding: 8px 12px; border-bottom: 2px solid var(--border);
+}
+.eng-table td { padding: 8px 12px; border-bottom: 1px solid #f1f5f9; }
+.eng-table tr:last-child td { border-bottom: none; }
+
+/* ── Funnel visualization ── */
+.funnel-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 0;
+}
+.funnel-label { width: 180px; font-size: 12px; font-weight: 500; }
+.funnel-bar-wrap { flex: 1; height: 28px; background: #f1f5f9; border-radius: 4px; position: relative; overflow: hidden; }
+.funnel-bar { height: 100%; border-radius: 4px; transition: width .5s; display: flex; align-items: center; padding-left: 10px; font-size: 11px; font-weight: 600; color: #fff; }
+.funnel-bar.bottleneck { box-shadow: inset 0 0 0 2px var(--red); }
+.funnel-value { font-size: 12px; font-weight: 600; width: 60px; text-align: right; }
+.funnel-dropoff { font-size: 11px; color: var(--red); width: 80px; }
+
+@media (max-width: 900px) {
+  .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <div>
+      <h1>R&A Executive Dashboard</h1>
+      <p>Reporting &amp; Analytics — Decision Intelligence</p>
+    </div>
+  </div>
+  <div class="header-right">
+    Source: mc-analytics-devel.bi_product.rpt_RA_L1L3_Test_03_04<br>
+    <span id="last-updated">—</span>
+  </div>
+</div>
+
+<div class="tabs">
+  <button class="tab-btn active" data-tab="overview">Executive Overview</button>
+  <button class="tab-btn" data-tab="details">Detailed Analytics</button>
+</div>
+
+<div class="filters">
+  <div class="filter-group">
+    <label>Segment</label>
+    <button class="filter-btn active" data-filter="ecu" data-value="all">All</button>
+    <button class="filter-btn" data-filter="ecu" data-value="ecu">ECU</button>
+    <button class="filter-btn" data-filter="ecu" data-value="non_ecu">Non-ECU</button>
+  </div>
+  <div class="filter-group">
+    <label>Value</label>
+    <button class="filter-btn active" data-filter="hvc" data-value="all">All</button>
+    <button class="filter-btn" data-filter="hvc" data-value="hvc">HVC</button>
+    <button class="filter-btn" data-filter="hvc" data-value="non_hvc">Non-HVC</button>
+  </div>
+  <div class="filter-group">
+    <label>Compare</label>
+    <button class="filter-btn" data-filter="compare" data-value="none">None</button>
+    <button class="filter-btn" data-filter="compare" data-value="wow">WoW</button>
+    <button class="filter-btn active" data-filter="compare" data-value="yoy">YoY</button>
+  </div>
+  <div class="filter-group">
+    <label>Granularity</label>
+    <button class="filter-btn active" data-filter="granularity" data-value="weekly">Weekly</button>
+    <button class="filter-btn" data-filter="granularity" data-value="monthly">Monthly</button>
+  </div>
+  <div class="filter-group" title="Tenure segmentation coming soon — requires signup date data">
+    <label>Tenure</label>
+    <button class="filter-btn active disabled">All</button>
+    <button class="filter-btn disabled">New</button>
+    <button class="filter-btn disabled">Tenured</button>
+  </div>
+</div>
+
+<div class="main">
+  <!-- ── PAGE 1: Executive Overview ──────────────────────────────────────── -->
+  <div id="page-overview" class="page active">
+    <div id="exec-summary-container"></div>
+    <div id="kpi-grid-container"></div>
+    <div id="overview-charts"></div>
+  </div>
+
+  <!-- ── PAGE 2: Detailed Analytics ──────────────────────────────────────── -->
+  <div id="page-details" class="page">
+    <div id="i2a-section"></div>
+    <div id="engagement-section"></div>
+    <div id="adoption-section"></div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════════
+//  STATE & CONSTANTS
+// ═══════════════════════════════════════════════════════════════════════════════
+const state = { ecu: "all", hvc: "all", granularity: "weekly", compare: "yoy" };
+const chartInstances = {};
+let currentTab = "overview";
+let engagementTab = "all";
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  TAB NAVIGATION
+// ═══════════════════════════════════════════════════════════════════════════════
+document.querySelectorAll(".tab-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    currentTab = btn.dataset.tab;
+    document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
+    document.getElementById("page-" + currentTab).classList.add("active");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  FILTERS
+// ═══════════════════════════════════════════════════════════════════════════════
+document.querySelectorAll(".filter-btn:not(.disabled)").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const { filter, value } = btn.dataset;
+    if (!filter) return;
+    state[filter] = value;
+    document.querySelectorAll(`.filter-btn[data-filter="${filter}"]`)
+      .forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    loadData();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  FORMATTERS
+// ═══════════════════════════════════════════════════════════════════════════════
+const fmtPct   = v => v == null ? "N/A" : v.toFixed(1) + "%";
+const fmtRatio = v => v == null ? "N/A" : v.toFixed(2);
+function fmtCurrency(v) {
+  if (!v) return "$0";
+  if (v >= 1e9) return "$" + (v / 1e9).toFixed(1) + "B";
+  if (v >= 1e6) return "$" + (v / 1e6).toFixed(1) + "M";
+  if (v >= 1e3) return "$" + (v / 1e3).toFixed(1) + "K";
+  return "$" + v.toFixed(0);
+}
+function fmtCount(v) {
+  if (v == null) return "–";
+  if (v >= 1e6) return (v / 1e6).toFixed(1) + "M";
+  if (v >= 1e3) return (v / 1e3).toFixed(1) + "K";
+  return v.toLocaleString();
+}
+function fmtDate(s) {
+  if (!s) return "";
+  const d = new Date(s + "T00:00:00");
+  return state.granularity === "monthly"
+    ? d.toLocaleDateString("en-US", { month: "short", year: "numeric" })
+    : d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  COMPARISON UTILITIES
+// ═══════════════════════════════════════════════════════════════════════════════
+function getComparePrefix() {
+  return state.compare === "wow" ? "pw_" : "py_";
+}
+function getCompareLabel() {
+  return state.compare === "wow" ? "WoW" : state.compare === "yoy" ? "YoY" : "";
+}
+function getPriorSeriesLabel() {
+  return state.compare === "wow" ? "Prior Week" : "Prior Year";
+}
+
+function delta(cur, pri, isRatio = false) {
+  if (state.compare === "none" || cur == null || pri == null || pri === 0)
+    return state.compare === "none" ? "" : `<span class="kpi-delta flat">No prior data</span>`;
+  const diff = cur - pri;
+  const cls  = diff > 0 ? "up" : diff < 0 ? "down" : "flat";
+  const arrow = diff > 0 ? "▲" : diff < 0 ? "▼" : "—";
+  const sign  = diff > 0 ? "+" : "";
+  const label = isRatio
+    ? `${sign}${diff.toFixed(2)} ${getCompareLabel()}`
+    : `${sign}${diff.toFixed(1)} pp ${getCompareLabel()}`;
+  return `<span class="kpi-delta ${cls}">${arrow} ${label}</span>`;
+}
+
+function latest(data, key) {
+  for (let i = data.length - 1; i >= 0; i--) {
+    if (data[i][key] != null) return data[i][key];
+  }
+  return null;
+}
+
+function latestPrior(data, key) {
+  const prefix = getComparePrefix();
+  return latest(data, prefix + key);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  CHART BUILDER (supports comparison modes)
+// ═══════════════════════════════════════════════════════════════════════════════
+function buildChart(id, labels, current, prior, fmt, opts = {}) {
+  if (chartInstances[id]) { chartInstances[id].destroy(); delete chartInstances[id]; }
+  const el = document.getElementById(id);
+  if (!el) return;
+  const ctx = el.getContext("2d");
+
+  const datasets = [{
+    label: "Current",
+    data: current,
+    borderColor: opts.color || "var(--chart-navy)",
+    backgroundColor: opts.fill ? (opts.fillColor || "rgba(30,58,110,.06)") : "transparent",
+    borderWidth: 2.5,
+    pointRadius: 2,
+    pointHoverRadius: 5,
+    pointBackgroundColor: opts.color || "#1e3a6e",
+    tension: 0.35,
+    fill: !!opts.fill,
+    spanGaps: true,
+  }];
+
+  if (state.compare !== "none" && prior) {
+    datasets.push({
+      label: getPriorSeriesLabel(),
+      data: prior,
+      borderColor: "#94a3b8",
+      backgroundColor: "transparent",
+      borderWidth: 1.5,
+      borderDash: [5, 4],
+      pointRadius: 0,
+      pointHoverRadius: 4,
+      tension: 0.35,
+      fill: false,
+      spanGaps: true,
+    });
+  }
+
+  chartInstances[id] = new Chart(ctx, {
+    type: "line",
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { intersect: false, mode: "index" },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: "rgba(22,34,81,.95)",
+          padding: 10, cornerRadius: 6,
+          titleFont: { size: 12, weight: "600" },
+          bodyFont: { size: 12 },
+          callbacks: {
+            label: ctx => ` ${ctx.dataset.label}: ${ctx.raw == null ? "N/A" : fmt(ctx.raw)}`
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: { font: { size: 10 }, color: "#9ca3af", maxRotation: 40,
+                   maxTicksLimit: state.granularity === "monthly" ? 20 : 26 }
+        },
+        y: {
+          grid: { color: "rgba(0,0,0,.04)" },
+          ticks: { font: { size: 10 }, color: "#9ca3af", callback: v => fmt(v) }
+        }
+      }
+    }
+  });
+}
+
+function buildAdoptionChart(id, labels, ownedData, totalData) {
+  if (chartInstances[id]) { chartInstances[id].destroy(); delete chartInstances[id]; }
+  const el = document.getElementById(id);
+  if (!el) return;
+  const ctx = el.getContext("2d");
+  chartInstances[id] = new Chart(ctx, {
+    type: "line",
+    data: {
+      labels,
+      datasets: [
+        {
+          label: "Owned Pages",
+          data: ownedData,
+          borderColor: "#1e3a6e",
+          backgroundColor: "rgba(30,58,110,.06)",
+          borderWidth: 2.5, pointRadius: 2, pointHoverRadius: 5,
+          pointBackgroundColor: "#1e3a6e", tension: 0.35, fill: true, spanGaps: true,
+        },
+        {
+          label: "Owned + Supported CTAs",
+          data: totalData,
+          borderColor: "#4472c4",
+          backgroundColor: "rgba(68,114,196,.06)",
+          borderWidth: 2.5, pointRadius: 2, pointHoverRadius: 5,
+          pointBackgroundColor: "#4472c4", tension: 0.35, fill: true, spanGaps: true,
+        }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { intersect: false, mode: "index" },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: "rgba(22,34,81,.95)", padding: 10, cornerRadius: 6,
+          callbacks: { label: ctx => ` ${ctx.dataset.label}: ${ctx.raw == null ? "N/A" : fmtPct(ctx.raw)}` }
+        }
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { font: { size: 10 }, color: "#9ca3af", maxRotation: 40 } },
+        y: { grid: { color: "rgba(0,0,0,.04)" }, ticks: { font: { size: 10 }, color: "#9ca3af", callback: v => fmtPct(v) } }
+      }
+    }
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  EXECUTIVE SUMMARY RENDERER
+// ═══════════════════════════════════════════════════════════════════════════════
+function renderExecSummary(summaryData) {
+  const el = document.getElementById("exec-summary-container");
+  if (!summaryData || !summaryData.summary || !summaryData.summary.length) {
+    el.innerHTML = `<div class="exec-summary"><div class="exec-header">
+      <span class="ai-icon">✦</span><h2>Weekly Executive Summary</h2>
+    </div><div style="padding:20px 24px;color:var(--muted);font-size:13px;">
+      Insufficient data to generate summary. More data points needed.
+    </div></div>`;
+    return;
+  }
+
+  const iconMap = { trend: "T", anomaly: "!", opportunity: "↑", threat: "↓", action: "→" };
+  const bullets = summaryData.summary;
+  const categories = [...new Set(bullets.map(b => b.category))];
+
+  el.innerHTML = `
+    <div class="exec-summary">
+      <div class="exec-header">
+        <span class="ai-icon">✦</span>
+        <h2>Weekly Executive Summary</h2>
+        <span class="period-badge">Week of ${fmtDate(summaryData.period)}</span>
+      </div>
+      <div class="exec-chips">
+        <button class="exec-chip active" data-cat="all">All</button>
+        ${categories.map(c => `<button class="exec-chip" data-cat="${c}">${c.charAt(0).toUpperCase() + c.slice(1)}</button>`).join("")}
+      </div>
+      <ul class="exec-bullets" id="exec-bullets">
+        ${bullets.map(b => `
+          <li class="exec-bullet" data-cat="${b.category}">
+            <div class="bullet-icon ${b.category}">${iconMap[b.category] || "•"}</div>
+            <div class="bullet-cat">${b.category}</div>
+            <div>${b.text}</div>
+          </li>
+        `).join("")}
+      </ul>
+    </div>
+  `;
+
+  // Chip filtering
+  el.querySelectorAll(".exec-chip").forEach(chip => {
+    chip.addEventListener("click", () => {
+      el.querySelectorAll(".exec-chip").forEach(c => c.classList.remove("active"));
+      chip.classList.add("active");
+      const cat = chip.dataset.cat;
+      el.querySelectorAll(".exec-bullet").forEach(b => {
+        b.style.display = (cat === "all" || b.dataset.cat === cat) ? "flex" : "none";
+      });
+    });
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  KPI GRID RENDERER (Page 1 — mini cards)
+// ═══════════════════════════════════════════════════════════════════════════════
+function renderKPIGrid(data) {
+  const el = document.getElementById("kpi-grid-container");
+  const noEcomm = state.ecu === "non_ecu";
+  const prefix = getComparePrefix();
+
+  const revPct = latest(data, "pct_attributed_rev");
+  const priorRevPct = latest(data, prefix + "pct_attributed_rev");
+
+  const campPct = latest(data, "pct_campaigns_created");
+  const priorCampPct = latest(data, prefix + "pct_campaigns_created");
+
+  const actionsPct = latest(data, "pct_actions_taken");
+  const priorActionsPct = latest(data, prefix + "pct_actions_taken");
+
+  const raTotal = latest(data, "pct_ra_total");
+  const priorRaTotal = latest(data, prefix + "pct_ra_total");
+
+  el.innerHTML = `
+    <div class="kpi-grid">
+      <div class="kpi-mini">
+        <div class="kpi-mini-label">% Attributed Revenue</div>
+        <div class="kpi-mini-value">${noEcomm ? "N/A" : fmtPct(revPct)}</div>
+        <div class="kpi-mini-delta">${noEcomm ? "" : delta(revPct, priorRevPct)}</div>
+      </div>
+      <div class="kpi-mini">
+        <div class="kpi-mini-label">% Created Campaign</div>
+        <div class="kpi-mini-value">${fmtPct(campPct)}</div>
+        <div class="kpi-mini-delta">${delta(campPct, priorCampPct)}</div>
+      </div>
+      <div class="kpi-mini">
+        <div class="kpi-mini-label">% Took Any Action (I2A)</div>
+        <div class="kpi-mini-value">${fmtPct(actionsPct)}</div>
+        <div class="kpi-mini-delta">${delta(actionsPct, priorActionsPct)}</div>
+      </div>
+      <div class="kpi-mini">
+        <div class="kpi-mini-label">R&A Adoption</div>
+        <div class="kpi-mini-value">${fmtPct(raTotal)}</div>
+        <div class="kpi-mini-delta">${delta(raTotal, priorRaTotal)}</div>
+      </div>
+    </div>
+  `;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  OVERVIEW CHARTS (Page 1)
+// ═══════════════════════════════════════════════════════════════════════════════
+function renderOverviewCharts(data, adoptionMap) {
+  const el = document.getElementById("overview-charts");
+  const labels = data.map(d => fmtDate(d.period_start));
+  const noEcomm = state.ecu === "non_ecu";
+  const prefix = getComparePrefix();
+
+  // Latest values for context
+  const revPct = latest(data, "pct_attributed_rev");
+  const priorRevPct = latest(data, prefix + "pct_attributed_rev");
+  const attribRev = latest(data, "attributed_rev");
+  const totalRev = latest(data, "total_rev");
+  const campPct = latest(data, "pct_campaigns_created");
+  const priorCampPct = latest(data, prefix + "pct_campaigns_created");
+  const campUsers = latest(data, "campaign_users");
+  const activeU = latest(data, "active_users");
+  const cpu = latest(data, "campaigns_per_user");
+  const priorCpu = latest(data, prefix + "campaigns_per_user");
+  const totalCamp = latest(data, "total_campaigns");
+
+  // Adoption
+  const adoptionRows = [...adoptionMap.values()];
+  const latestAdoption = adoptionRows.length ? adoptionRows[adoptionRows.length - 1] : null;
+  const raTotalPct = latestAdoption?.pct_ra_total ?? null;
+  const raOwnedPct = latestAdoption?.pct_ra_owned ?? null;
+
+  el.innerHTML = `
+    <!-- % Attributed Revenue -->
+    <div class="metric-card">
+      <div class="card-top">
+        <div class="card-title">% Attributed Revenue</div>
+        <div class="card-subtitle">Share of total GMV attributed to Mailchimp campaigns — ecommerce users only</div>
+      </div>
+      <div class="kpi-row">
+        <div class="kpi-value">${noEcomm ? "N/A" : fmtPct(revPct)}</div>
+        ${noEcomm ? "" : delta(revPct, priorRevPct)}
+        ${!noEcomm && attribRev != null ? `<div class="kpi-context">${fmtCurrency(attribRev)} attributed / ${fmtCurrency(totalRev)} total GMV</div>` : ""}
+      </div>
+      ${noEcomm ? `<div class="na-note">Attributed revenue is only tracked for ecommerce-connected users. Switch to <strong>All</strong> or <strong>ECU</strong>.</div>` : ""}
+      <div class="chart-legend">
+        <div class="legend-item"><div class="leg-line current"></div> Current</div>
+        ${state.compare !== "none" ? `<div class="legend-item"><div class="leg-line prior"></div> ${getPriorSeriesLabel()}</div>` : ""}
+      </div>
+      <div class="chart-wrap"><canvas id="chart-rev"></canvas></div>
+      <div class="glossary">
+        <button class="glossary-toggle" onclick="toggleGlossary(this)">▶ How this is calculated</button>
+        <div class="glossary-body">
+          <strong>Formula:</strong> MC Attributed Revenue ÷ Total GMV × 100<br>
+          <strong>Numerator:</strong> Revenue attributed to a Mailchimp campaign for ECU users on Shopify, WooCommerce, Wix, BigCommerce, Nuvemshop, ShopSync.<br>
+          <strong>Denominator:</strong> Total GMV across same platforms.<br>
+          <strong>Source:</strong> <code>rpt_RA_L1L3_Test_03_04</code> via <code>ecommerce_orders_daily_rollups_tmp</code>
+        </div>
+      </div>
+    </div>
+
+    <!-- % Created Campaign -->
+    <div class="metric-card">
+      <div class="card-top">
+        <div class="card-title">Insight to Action: % of Active Users Who Created a Campaign</div>
+        <div class="card-subtitle">Users who created a campaign within 1 day of first viewing any R&A product that week</div>
+      </div>
+      <div class="kpi-row">
+        <div class="kpi-value">${fmtPct(campPct)}</div>
+        ${delta(campPct, priorCampPct)}
+        ${campUsers != null ? `<div class="kpi-context">${fmtCount(campUsers)} users / ${fmtCount(activeU)} WAU</div>` : ""}
+      </div>
+      <div class="chart-legend">
+        <div class="legend-item"><div class="leg-line current"></div> Current</div>
+        ${state.compare !== "none" ? `<div class="legend-item"><div class="leg-line prior"></div> ${getPriorSeriesLabel()}</div>` : ""}
+      </div>
+      <div class="chart-wrap"><canvas id="chart-camp-pct"></canvas></div>
+      <div class="glossary">
+        <button class="glossary-toggle" onclick="toggleGlossary(this)">▶ How this is calculated</button>
+        <div class="glossary-body">
+          <strong>Formula:</strong> Campaign Created Users ÷ WAU × 100<br>
+          <strong>Window:</strong> Campaign must be created within 1 day of user's first R&A view that week.<br>
+          <strong>Source:</strong> <code>rpt_RA_L1L3_Test_03_04</code> as <code>campaign_created_users</code>
+        </div>
+      </div>
+    </div>
+
+    <!-- Campaigns per User -->
+    <div class="metric-card">
+      <div class="card-top">
+        <div class="card-title">Insight to Action: Campaigns Created per Active User</div>
+        <div class="card-subtitle">Average campaigns created within 1 day of first R&A view, per WAU</div>
+      </div>
+      <div class="kpi-row">
+        <div class="kpi-value">${fmtRatio(cpu)}</div>
+        ${delta(cpu, priorCpu, true)}
+        ${totalCamp != null ? `<div class="kpi-context">${fmtCount(totalCamp)} campaigns / ${fmtCount(activeU)} WAU</div>` : ""}
+      </div>
+      <div class="chart-legend">
+        <div class="legend-item"><div class="leg-line current"></div> Current</div>
+        ${state.compare !== "none" ? `<div class="legend-item"><div class="leg-line prior"></div> ${getPriorSeriesLabel()}</div>` : ""}
+      </div>
+      <div class="chart-wrap"><canvas id="chart-cpu"></canvas></div>
+      <div class="glossary">
+        <button class="glossary-toggle" onclick="toggleGlossary(this)">▶ How this is calculated</button>
+        <div class="glossary-body">
+          <strong>Formula:</strong> Total Campaigns Created ÷ WAU<br>
+          <strong>Note:</strong> A user creating 3 campaigns contributes 3 to numerator but 1 to denominator.<br>
+          <strong>Source:</strong> <code>rpt_RA_L1L3_Test_03_04</code> as <code>total_campaigns_created</code>
+        </div>
+      </div>
+    </div>
+
+    <!-- R&A Adoption -->
+    <div class="metric-card">
+      <div class="card-top">
+        <div class="card-title">R&A Adoption</div>
+        <div class="card-subtitle">Share of active users who reached R&A — owned pages vs. owned + supported CTAs</div>
+      </div>
+      <div class="kpi-row">
+        <div class="kpi-value">${fmtPct(raTotalPct)}</div>
+        ${raOwnedPct != null ? `<span class="kpi-delta flat">Owned only: ${fmtPct(raOwnedPct)}</span>` : ""}
+        ${latestAdoption?.active_users != null ? `<div class="kpi-context">de-duped union / ${fmtCount(latestAdoption.active_users)} WAU</div>` : ""}
+      </div>
+      <div class="chart-legend">
+        <div class="legend-item"><div class="leg-line owned"></div> Owned Pages</div>
+        <div class="legend-item"><div class="leg-line supported"></div> Owned + Supported</div>
+      </div>
+      <div class="chart-wrap"><canvas id="chart-ra-adoption"></canvas></div>
+      <div class="glossary">
+        <button class="glossary-toggle" onclick="toggleGlossary(this)">▶ How this is calculated</button>
+        <div class="glossary-body">
+          <strong>Owned Pages:</strong> <code>reporting:viewed</code> on Marketing Dashboard, Audience Analytics, Conversion Insights, Custom Reports, Reports, SMS Report, Email Report, CJB Report, Analytics Agent.<br>
+          <strong>Supported CTAs:</strong> Homepage widgets, All Campaigns "View analytics"/"View report" buttons.<br>
+          <strong>De-duplication:</strong> Each user counted once even if appearing in both groups.
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Build all charts
+  const priorKey = state.compare === "wow" ? "pw_" : "py_";
+  buildChart("chart-rev", labels,
+    data.map(d => d.pct_attributed_rev),
+    data.map(d => d[priorKey + "pct_attributed_rev"]),
+    fmtPct, { fill: true }
+  );
+  buildChart("chart-camp-pct", labels,
+    data.map(d => d.pct_campaigns_created),
+    data.map(d => d[priorKey + "pct_campaigns_created"]),
+    fmtPct, { fill: true }
+  );
+  buildChart("chart-cpu", labels,
+    data.map(d => d.campaigns_per_user),
+    data.map(d => d[priorKey + "campaigns_per_user"]),
+    fmtRatio, { fill: true }
+  );
+  buildAdoptionChart("chart-ra-adoption", labels,
+    data.map(d => adoptionMap.get(d.period_start)?.pct_ra_owned ?? null),
+    data.map(d => adoptionMap.get(d.period_start)?.pct_ra_total ?? null)
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  I2A BREAKDOWN (Page 2)
+// ═══════════════════════════════════════════════════════════════════════════════
+function renderI2ASection(data) {
+  const el = document.getElementById("i2a-section");
+  const prefix = getComparePrefix();
+  const labels = data.map(d => fmtDate(d.period_start));
+
+  const actionsPct = latest(data, "pct_actions_taken");
+  const priorActionsPct = latest(data, prefix + "pct_actions_taken");
+  const activeU = latest(data, "active_users");
+
+  const rows = [
+    {
+      name: "Campaign Created", users: latest(data, "campaign_users"),
+      rate: latest(data, "pct_campaigns_created"),
+      priorRate: latest(data, prefix + "pct_campaigns_created"),
+      count: latest(data, "total_campaigns"),
+      chartId: "chart-i2a-camp",
+      currentData: data.map(d => d.pct_campaigns_created),
+      priorData: data.map(d => d[prefix + "pct_campaigns_created"]),
+    },
+    {
+      name: "Automation Created", users: latest(data, "automation_users"),
+      rate: latest(data, "pct_automations_created"),
+      priorRate: latest(data, prefix + "pct_automations_created"),
+      count: latest(data, "total_automations"),
+      chartId: "chart-i2a-auto",
+      currentData: data.map(d => d.pct_automations_created),
+      priorData: data.map(d => d[prefix + "pct_automations_created"]),
+    },
+    {
+      name: "Segment Created", users: latest(data, "segment_users"),
+      rate: latest(data, "pct_segments_created"),
+      priorRate: latest(data, prefix + "pct_segments_created"),
+      count: latest(data, "total_segments"),
+      chartId: "chart-i2a-seg",
+      currentData: data.map(d => d.pct_segments_created),
+      priorData: data.map(d => d[prefix + "pct_segments_created"]),
+    },
+  ];
+
+  el.innerHTML = `
+    <div class="section-title"><span class="ai-icon">✦</span> Insight to Action — Breakdown by Action Type</div>
+    <div class="metric-card">
+      <div class="card-top">
+        <div class="card-title">Overall: % of Users Who Took Any Action</div>
+        <div class="card-subtitle">Users who created a campaign, automation, or segment within 1 day of first R&A view</div>
+      </div>
+      <div class="kpi-row">
+        <div class="kpi-value">${fmtPct(actionsPct)}</div>
+        ${delta(actionsPct, priorActionsPct)}
+        <div class="kpi-context">${fmtCount(latest(data, "actions_taken_users"))} users / ${fmtCount(activeU)} WAU</div>
+      </div>
+      <div style="padding: 16px 24px;">
+        <table class="i2a-table">
+          <thead>
+            <tr>
+              <th>Action Type</th>
+              <th>Users</th>
+              <th>% of WAU</th>
+              <th>Δ ${getCompareLabel()}</th>
+              <th>Total Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map(r => `
+              <tr>
+                <td class="action-name">${r.name}</td>
+                <td>${fmtCount(r.users)}</td>
+                <td>${fmtPct(r.rate)}</td>
+                <td>${delta(r.rate, r.priorRate)}</td>
+                <td>${fmtCount(r.count)}</td>
+              </tr>
+            `).join("")}
+            <tr>
+              <td class="action-name coming-soon">A/B Test Created</td>
+              <td class="coming-soon">—</td>
+              <td class="coming-soon">—</td>
+              <td class="coming-soon">—</td>
+              <td class="coming-soon">Coming Soon</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    ${rows.map(r => `
+      <div class="metric-card">
+        <div class="card-top"><div class="card-title">${r.name} — Trend</div></div>
+        <div class="chart-legend">
+          <div class="legend-item"><div class="leg-line current"></div> Current</div>
+          ${state.compare !== "none" ? `<div class="legend-item"><div class="leg-line prior"></div> ${getPriorSeriesLabel()}</div>` : ""}
+        </div>
+        <div class="chart-wrap"><canvas id="${r.chartId}"></canvas></div>
+      </div>
+    `).join("")}
+  `;
+
+  rows.forEach(r => {
+    buildChart(r.chartId, labels, r.currentData, r.priorData, fmtPct, { fill: true });
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  ENGAGEMENT BREAKDOWN (Page 2)
+// ═══════════════════════════════════════════════════════════════════════════════
+function renderEngagementSection(engData) {
+  const el = document.getElementById("engagement-section");
+  if (!engData || !engData.length) {
+    el.innerHTML = `<div class="section-title">Engagement Breakdown</div>
+      <div class="metric-card"><div style="padding:20px 24px;color:var(--muted);font-size:13px;">No engagement data available.</div></div>`;
+    return;
+  }
+
+  const latestEng = engData[engData.length - 1];
+
+  function makeTable(pageData, title) {
+    if (!pageData || !Object.keys(pageData).length) return `<div style="padding:12px;color:var(--muted);font-size:13px;">No data for ${title}.</div>`;
+    const entries = Object.entries(pageData).sort((a, b) => (b[1].users || 0) - (a[1].users || 0));
+    return `
+      <table class="eng-table">
+        <thead><tr><th>Page</th><th>Users</th><th>% of WAU</th></tr></thead>
+        <tbody>
+          ${entries.map(([name, d]) => `
+            <tr>
+              <td style="font-weight:500;">${name}</td>
+              <td>${fmtCount(d.users)}</td>
+              <td>${fmtPct(d.rate)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    `;
+  }
+
+  // Combined totals
+  const combinedData = latestEng.combined || {};
+  const allViewedEntry = combinedData["RA Viewed (All)"] || {};
+  const allEngagedEntry = combinedData["RA Engaged (All)"] || {};
+
+  el.innerHTML = `
+    <div class="section-title">Engagement Breakdown</div>
+    <div class="metric-card">
+      <div class="card-top">
+        <div class="card-title">R&A Engagement Overview</div>
+        <div class="card-subtitle">User reach across owned and supported assets</div>
+      </div>
+      <div class="kpi-row">
+        <div class="kpi-value">${fmtPct(allViewedEntry.rate)}</div>
+        <span class="kpi-delta flat">Viewed Any R&A Page</span>
+        <div class="kpi-context">${fmtCount(allViewedEntry.users)} users / ${fmtCount(allViewedEntry.denominator)} WAU</div>
+      </div>
+      <div style="padding: 16px 24px 0;">
+        <div class="eng-tabs">
+          <button class="eng-tab active" data-eng="all">All</button>
+          <button class="eng-tab" data-eng="owned">Owned Assets</button>
+          <button class="eng-tab" data-eng="supported">Supported Pages</button>
+          <button class="eng-tab" data-eng="owned_engaged">Owned Engaged</button>
+          <button class="eng-tab" data-eng="supported_engaged">Supported Engaged</button>
+        </div>
+      </div>
+      <div id="eng-table-container" style="padding: 0 24px 16px;">
+        ${makeTable({...latestEng.owned, ...latestEng.supported}, "All")}
+      </div>
+    </div>
+  `;
+
+  // Tab switching for engagement
+  el.querySelectorAll(".eng-tab").forEach(tab => {
+    tab.addEventListener("click", () => {
+      el.querySelectorAll(".eng-tab").forEach(t => t.classList.remove("active"));
+      tab.classList.add("active");
+      const mode = tab.dataset.eng;
+      const container = document.getElementById("eng-table-container");
+      if (mode === "all") {
+        container.innerHTML = makeTable({...latestEng.owned, ...latestEng.supported}, "All");
+      } else if (mode === "owned") {
+        container.innerHTML = makeTable(latestEng.owned, "Owned");
+      } else if (mode === "supported") {
+        container.innerHTML = makeTable(latestEng.supported, "Supported");
+      } else if (mode === "owned_engaged") {
+        container.innerHTML = makeTable(latestEng.owned_engaged, "Owned Engaged");
+      } else if (mode === "supported_engaged") {
+        container.innerHTML = makeTable(latestEng.supported_engaged, "Supported Engaged");
+      }
+    });
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  GLOSSARY TOGGLE
+// ═══════════════════════════════════════════════════════════════════════════════
+function toggleGlossary(btn) {
+  const body = btn.nextElementSibling;
+  const open = body.classList.toggle("open");
+  btn.childNodes[0].nodeValue = open ? "▼ How this is calculated" : "▶ How this is calculated";
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  DATA FETCH & ORCHESTRATION
+// ═══════════════════════════════════════════════════════════════════════════════
+async function loadData() {
+  Object.values(chartInstances).forEach(c => c.destroy());
+  Object.keys(chartInstances).forEach(k => delete chartInstances[k]);
+
+  // Show loading on all containers
+  ["exec-summary-container", "kpi-grid-container", "overview-charts", "i2a-section", "engagement-section", "adoption-section"]
+    .forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = `<div class="state-box"><div class="spinner"></div> Loading…</div>`;
+    });
+
+  try {
+    const qs = new URLSearchParams({
+      ecu: state.ecu, hvc: state.hvc, granularity: state.granularity
+    }).toString();
+    const compareQs = qs + `&compare=${state.compare}`;
+
+    // Fetch all APIs in parallel
+    const [metricsRes, adoptionRes, engagementRes, summaryRes] = await Promise.all([
+      fetch("/api/metrics?" + qs),
+      fetch("/api/adoption?" + qs),
+      fetch("/api/engagement?" + qs),
+      fetch("/api/executive-summary?" + compareQs),
+    ]);
+
+    if (!metricsRes.ok) throw new Error(`Metrics API returned ${metricsRes.status}`);
+
+    const metricsData = await metricsRes.json();
+    const adoptionData = adoptionRes.ok ? await adoptionRes.json() : [];
+    const engagementData = engagementRes.ok ? await engagementRes.json() : [];
+    const summaryData = summaryRes.ok ? await summaryRes.json() : null;
+
+    const adoptionMap = new Map(adoptionData.map(d => [d.period_start, d]));
+
+    if (!metricsData.length) {
+      document.getElementById("overview-charts").innerHTML =
+        `<div class="state-box">No data for the selected filters.</div>`;
+      return;
+    }
+
+    // ── Render Page 1: Executive Overview ──
+    renderExecSummary(summaryData);
+    renderKPIGrid(metricsData);
+    renderOverviewCharts(metricsData, adoptionMap);
+
+    // ── Render Page 2: Detailed Analytics ──
+    renderI2ASection(metricsData);
+    renderEngagementSection(engagementData);
+
+    // Adoption section on page 2 (placeholder for now, main adoption chart is on page 1)
+    document.getElementById("adoption-section").innerHTML = "";
+
+    // Update header timestamp
+    const latestWeek = metricsData[metricsData.length - 1]?.period_start ?? "";
+    document.getElementById("last-updated").textContent = "Latest data: " + fmtDate(latestWeek);
+
+  } catch (err) {
+    const errorHtml = `
+      <div class="state-box" style="flex-direction:column;gap:8px;">
+        <strong style="color:var(--red)">Failed to load data</strong>
+        <span>${err.message}</span>
+        <span style="font-size:11px;color:var(--muted)">
+          Make sure Flask server is running (<code>python server.py</code>)
+          and BigQuery credentials: <code>gcloud auth application-default login</code>
+        </span>
+      </div>`;
+    ["exec-summary-container", "overview-charts", "i2a-section", "engagement-section"]
+      .forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = errorHtml;
+      });
+    document.getElementById("kpi-grid-container").innerHTML = "";
+  }
+}
+
+loadData();
+</script>
+</body>
+</html>
