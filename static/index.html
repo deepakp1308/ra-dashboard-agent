@@ -370,7 +370,8 @@ body { background: var(--bg); font-family: var(--font); color: var(--text); min-
   </div>
   <div class="header-right">
     Source: mc-analytics-devel.bi_product.rpt_RA_L1L3_Test_03_04<br>
-    <span id="last-updated">—</span>
+    <span id="last-updated">—</span><br>
+    <span id="data-freshness" style="font-size:10px;">—</span>
   </div>
 </div>
 
@@ -460,9 +461,28 @@ document.querySelectorAll(".filter-btn:not(.disabled)").forEach(btn => {
     document.querySelectorAll(`.filter-btn[data-filter="${filter}"]`)
       .forEach(b => b.classList.remove("active"));
     btn.classList.add("active");
+    // Fix 2: Monthly granularity disables WoW (pw_ columns are weekly LAGs, not monthly)
+    updateWoWAvailability();
     loadData();
   });
 });
+
+function updateWoWAvailability() {
+  const wowBtn = document.querySelector('[data-filter="compare"][data-value="wow"]');
+  if (!wowBtn) return;
+  if (state.granularity === "monthly") {
+    wowBtn.classList.add("disabled");
+    wowBtn.title = "WoW comparison not available for monthly granularity";
+    if (state.compare === "wow") {
+      state.compare = "yoy";
+      wowBtn.classList.remove("active");
+      document.querySelector('[data-filter="compare"][data-value="yoy"]').classList.add("active");
+    }
+  } else {
+    wowBtn.classList.remove("disabled");
+    wowBtn.title = "";
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  FORMATTERS
@@ -1108,6 +1128,32 @@ function toggleGlossary(btn) {
 // ═══════════════════════════════════════════════════════════════════════════════
 //  DATA FETCH & ORCHESTRATION
 // ═══════════════════════════════════════════════════════════════════════════════
+
+// Fix 7: fetch with AbortController timeout
+function fetchWithTimeout(url, timeoutMs = 30000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { signal: controller.signal }).finally(() => clearTimeout(timer));
+}
+
+// Fix 4: data freshness display
+function updateFreshness(meta) {
+  const el = document.getElementById("data-freshness");
+  if (!el || !meta) return;
+  const extracted = new Date(meta.extracted_at);
+  const ageMs = Date.now() - extracted.getTime();
+  const ageHours = Math.floor(ageMs / 3600000);
+  const ageMin = Math.floor((ageMs % 3600000) / 60000);
+  const cacheLabel = meta.cache_hit ? "cached" : "fresh";
+  if (ageHours >= 12) {
+    el.innerHTML = `<span style="color:var(--amber);">Data ${ageHours}h old (${cacheLabel})</span>`;
+  } else if (ageHours >= 1) {
+    el.textContent = `Refreshed ${ageHours}h ${ageMin}m ago (${cacheLabel})`;
+  } else {
+    el.textContent = `Refreshed ${ageMin}m ago (${cacheLabel})`;
+  }
+}
+
 async function loadData() {
   Object.values(chartInstances).forEach(c => c.destroy());
   Object.keys(chartInstances).forEach(k => delete chartInstances[k]);
@@ -1125,19 +1171,29 @@ async function loadData() {
     }).toString();
     const compareQs = qs + `&compare=${state.compare}`;
 
-    // Fetch all APIs in parallel
+    // Fetch all APIs in parallel with 30s timeout (Fix 7)
     const [metricsRes, adoptionRes, engagementRes, summaryRes] = await Promise.all([
-      fetch("/api/metrics?" + qs),
-      fetch("/api/adoption?" + qs),
-      fetch("/api/engagement?" + qs),
-      fetch("/api/executive-summary?" + compareQs),
+      fetchWithTimeout("/api/metrics?" + qs),
+      fetchWithTimeout("/api/adoption?" + qs),
+      fetchWithTimeout("/api/engagement?" + qs),
+      fetchWithTimeout("/api/executive-summary?" + compareQs),
     ]);
 
-    if (!metricsRes.ok) throw new Error(`Metrics API returned ${metricsRes.status}`);
+    if (!metricsRes.ok) {
+      const errBody = await metricsRes.json().catch(() => ({}));
+      throw new Error(errBody.error || `Metrics API returned ${metricsRes.status}`);
+    }
 
     const metricsData = await metricsRes.json();
-    const adoptionData = adoptionRes.ok ? await adoptionRes.json() : [];
-    const engagementData = engagementRes.ok ? await engagementRes.json() : [];
+
+    // Adoption/engagement may return {data, meta} wrapper (Fix 4)
+    const adoptionJson = adoptionRes.ok ? await adoptionRes.json() : {};
+    const adoptionData = Array.isArray(adoptionJson) ? adoptionJson : (adoptionJson.data || []);
+    const adoptionMeta = adoptionJson.meta || null;
+
+    const engagementJson = engagementRes.ok ? await engagementRes.json() : {};
+    const engagementData = Array.isArray(engagementJson) ? engagementJson : (engagementJson.data || []);
+
     const summaryData = summaryRes.ok ? await summaryRes.json() : null;
 
     const adoptionMap = new Map(adoptionData.map(d => [d.period_start, d]));
@@ -1156,19 +1212,19 @@ async function loadData() {
     // ── Render Page 2: Detailed Analytics ──
     renderI2ASection(metricsData);
     renderEngagementSection(engagementData);
-
-    // Adoption section on page 2 (placeholder for now, main adoption chart is on page 1)
     document.getElementById("adoption-section").innerHTML = "";
 
-    // Update header timestamp
+    // Update header timestamp + freshness (Fix 4)
     const latestWeek = metricsData[metricsData.length - 1]?.period_start ?? "";
     document.getElementById("last-updated").textContent = "Latest data: " + fmtDate(latestWeek);
+    if (adoptionMeta) updateFreshness(adoptionMeta);
 
   } catch (err) {
+    const msg = err.name === "AbortError" ? "Request timed out (30s). BigQuery may be slow." : err.message;
     const errorHtml = `
       <div class="state-box" style="flex-direction:column;gap:8px;">
         <strong style="color:var(--red)">Failed to load data</strong>
-        <span>${err.message}</span>
+        <span>${msg}</span>
         <span style="font-size:11px;color:var(--muted)">
           Make sure Flask server is running (<code>python server.py</code>)
           and BigQuery credentials: <code>gcloud auth application-default login</code>

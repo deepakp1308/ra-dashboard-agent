@@ -4,6 +4,10 @@ Serves metrics, engagement, insight-to-action, and executive summary APIs from B
 """
 
 import datetime
+import json
+import logging
+import time
+
 from flask import Flask, jsonify, request, send_from_directory
 from google.cloud import bigquery
 from config import (
@@ -21,6 +25,14 @@ from analytics import (
     generate_executive_summary,
 )
 
+# ── Logging ───────────────────────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("ra_dashboard")
+
 app = Flask(__name__, static_folder="static")
 client = bigquery.Client(project="mc-analytics-devel")
 
@@ -33,9 +45,10 @@ def _cache_get(key):
     entry = _cache.get(key)
     if entry:
         data, ts = entry
-        if (datetime.datetime.utcnow() - ts).total_seconds() < _CACHE_TTL:
-            return data
-    return None
+        age = (datetime.datetime.utcnow() - ts).total_seconds()
+        if age < _CACHE_TTL:
+            return data, ts, True  # data, timestamp, is_cache_hit
+    return None, None, False
 
 
 def _cache_set(key, data):
@@ -43,6 +56,25 @@ def _cache_set(key, data):
 
 
 TABLE = "mc-analytics-devel.bi_product.rpt_RA_L1L3_Test_03_04"
+
+
+# ── Input validation (Fix 1 — SQL injection prevention) ──────────────────────
+VALID_ECU = {"all", "ecu", "non_ecu"}
+VALID_HVC = {"all", "hvc", "non_hvc"}
+VALID_GRANULARITY = {"weekly", "monthly"}
+VALID_COMPARE = {"none", "wow", "yoy"}
+
+
+def _validate_filters(ecu, hvc, granularity):
+    """Reject invalid filter values before they reach SQL."""
+    errors = []
+    if ecu not in VALID_ECU:
+        errors.append(f"Invalid ecu value: '{ecu}'. Must be one of {VALID_ECU}")
+    if hvc not in VALID_HVC:
+        errors.append(f"Invalid hvc value: '{hvc}'. Must be one of {VALID_HVC}")
+    if granularity not in VALID_GRANULARITY:
+        errors.append(f"Invalid granularity: '{granularity}'. Must be one of {VALID_GRANULARITY}")
+    return errors
 
 
 # ── Filter helpers ────────────────────────────────────────────────────────────
@@ -79,15 +111,51 @@ def _period_expr(granularity, col="week"):
 
 
 def _get_filters():
-    return (
-        request.args.get("ecu", "all"),
-        request.args.get("hvc", "all"),
-        request.args.get("granularity", "weekly"),
-    )
+    ecu = request.args.get("ecu", "all")
+    hvc = request.args.get("hvc", "all")
+    granularity = request.args.get("granularity", "weekly")
+    errors = _validate_filters(ecu, hvc, granularity)
+    if errors:
+        return None, None, None, errors
+    return ecu, hvc, granularity, None
 
 
 def _metrics_in_clause(metric_list):
     return ", ".join(f"'{m}'" for m in metric_list)
+
+
+def _run_query(query, description="query"):
+    """Execute a BigQuery query with error handling and timing."""
+    start = time.time()
+    try:
+        result = client.query(query).result()
+        rows = []
+        for row in result:
+            r = dict(row)
+            if hasattr(r.get("period_start"), "isoformat"):
+                r["period_start"] = r["period_start"].isoformat()
+            rows.append(r)
+        duration = time.time() - start
+        logger.info(f"{description}: {len(rows)} rows in {duration:.2f}s")
+        return rows, None
+    except Exception as e:
+        duration = time.time() - start
+        logger.error(f"{description} FAILED after {duration:.2f}s: {e}")
+        return None, str(e)
+
+
+def _make_response(data, cache_ts=None, cache_hit=False):
+    """Wrap data with metadata for freshness tracking (Fix 4)."""
+    now = datetime.datetime.utcnow().isoformat() + "Z"
+    extracted = cache_ts.isoformat() + "Z" if cache_ts else now
+    return jsonify({
+        "data": data,
+        "meta": {
+            "extracted_at": extracted,
+            "served_at": now,
+            "cache_hit": cache_hit,
+        },
+    })
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -102,9 +170,54 @@ def get_metrics():
     """
     Core metrics endpoint — returns all KPI data with WoW and YoY comparisons.
     Expanded to include I2A metrics (automations, segments) and WoW data.
+
+    Fix 2: WoW (pw_) columns excluded for monthly granularity.
+    Fix 5: category = 'L1' filter prevents double-counting across L1/L2/L3.
+    Fix 6: pw_has_data / py_has_data flags for null-vs-zero distinction.
     """
-    ecu, hvc, granularity = _get_filters()
+    ecu, hvc, granularity, errors = _get_filters()
+    if errors:
+        return jsonify({"error": errors}), 400
+
     metrics_sql = _metrics_in_clause(CORE_METRICS)
+    is_weekly = granularity == "weekly"
+
+    # Fix 2: only include pw_ columns for weekly granularity
+    pw_select = ""
+    pw_pivot = ""
+    if is_weekly:
+        pw_pivot = """
+            -- ── Prior WEEK numerators (WoW comparison) ──────────────────
+            SUM(CASE WHEN metric_name = 'campaign_created_users'     THEN pw ELSE 0 END) AS pw_campaign_users,
+            SUM(CASE WHEN metric_name = 'total_campaigns_created'    THEN pw ELSE 0 END) AS pw_total_campaigns,
+            SUM(CASE WHEN metric_name = 'total_attributable_revenue' THEN pw ELSE 0 END) AS pw_attributed_rev,
+            SUM(CASE WHEN metric_name = 'RA_Viewed_Users'            THEN pw ELSE 0 END) AS pw_ra_active_users,
+            SUM(CASE WHEN metric_name = 'automation_created_users'   THEN pw ELSE 0 END) AS pw_automation_users,
+            SUM(CASE WHEN metric_name = 'total_automations_created'  THEN pw ELSE 0 END) AS pw_total_automations,
+            SUM(CASE WHEN metric_name = 'segment_created_users'      THEN pw ELSE 0 END) AS pw_segment_users,
+            SUM(CASE WHEN metric_name = 'total_segments_created'     THEN pw ELSE 0 END) AS pw_total_segments,
+            SUM(CASE WHEN metric_name = 'actions_taken_users'        THEN pw ELSE 0 END) AS pw_actions_taken_users,
+            SUM(CASE WHEN metric_name = 'total_actions'              THEN pw ELSE 0 END) AS pw_total_actions,
+            SUM(CASE WHEN metric_name = 'campaign_created_users'     THEN pw_denominator ELSE 0 END) AS pw_active_users,
+            SUM(CASE WHEN metric_name = 'total_attributable_revenue' THEN pw_denominator ELSE 0 END) AS pw_total_rev,
+            SUM(CASE WHEN metric_name = 'RA_Owned_Viewed_Users'      THEN pw           ELSE 0 END) AS pw_ra_owned_users,
+            SUM(CASE WHEN metric_name = 'RA_Supported_Engaged_Users' THEN pw           ELSE 0 END) AS pw_ra_supported_users,
+            -- Fix 6: null-vs-zero flag
+            COUNTIF(metric_name = 'campaign_created_users' AND pw IS NOT NULL) > 0 AS pw_has_data,
+        """
+        pw_select = """
+        ROUND(SAFE_DIVIDE(pw_attributed_rev, pw_total_rev) * 100, 2) AS pw_pct_attributed_rev,
+        ROUND(SAFE_DIVIDE(pw_campaign_users, pw_active_users) * 100, 2) AS pw_pct_campaigns_created,
+        ROUND(SAFE_DIVIDE(pw_total_campaigns, pw_active_users), 2) AS pw_campaigns_per_user,
+        ROUND(SAFE_DIVIDE(pw_automation_users, pw_active_users) * 100, 2) AS pw_pct_automations_created,
+        ROUND(SAFE_DIVIDE(pw_total_automations, pw_active_users), 2) AS pw_automations_per_user,
+        ROUND(SAFE_DIVIDE(pw_segment_users, pw_active_users) * 100, 2) AS pw_pct_segments_created,
+        ROUND(SAFE_DIVIDE(pw_total_segments, pw_active_users), 2) AS pw_segments_per_user,
+        ROUND(SAFE_DIVIDE(pw_actions_taken_users, pw_active_users) * 100, 2) AS pw_pct_actions_taken,
+        ROUND(SAFE_DIVIDE(pw_ra_owned_users, pw_active_users) * 100, 2) AS pw_pct_ra_owned,
+        ROUND(SAFE_DIVIDE(pw_ra_active_users, pw_active_users) * 100, 2) AS pw_pct_ra_total,
+        pw_has_data,
+        """
 
     query = f"""
     WITH filtered AS (
@@ -113,12 +226,14 @@ def get_metrics():
             metric_name,
             metric_value,
             denominator,
-            COALESCE(py, 0)            AS py,
+            py,
+            COALESCE(py, 0)            AS py_val,
             COALESCE(py_denominator, 0) AS py_denominator,
             COALESCE(pw, 0)            AS pw,
             COALESCE(pw_denominator, 0) AS pw_denominator
         FROM `{TABLE}`
         WHERE metric_name IN ({metrics_sql})
+          AND category = 'L1'
           AND {_ecu_clause(ecu)}
           AND {_hvc_clause(hvc)}
     ),
@@ -131,8 +246,6 @@ def get_metrics():
             SUM(CASE WHEN metric_name = 'total_campaigns_created'    THEN metric_value ELSE 0 END) AS total_campaigns,
             SUM(CASE WHEN metric_name = 'total_attributable_revenue' THEN metric_value ELSE 0 END) AS attributed_rev,
             SUM(CASE WHEN metric_name = 'RA_Viewed_Users'            THEN metric_value ELSE 0 END) AS ra_active_users,
-
-            -- NEW: I2A expansion numerators
             SUM(CASE WHEN metric_name = 'automation_created_users'   THEN metric_value ELSE 0 END) AS automation_users,
             SUM(CASE WHEN metric_name = 'total_automations_created'  THEN metric_value ELSE 0 END) AS total_automations,
             SUM(CASE WHEN metric_name = 'segment_created_users'      THEN metric_value ELSE 0 END) AS segment_users,
@@ -148,44 +261,30 @@ def get_metrics():
             SUM(CASE WHEN metric_name = 'c2_users'                   THEN denominator  ELSE 0 END) AS c1s_users,
 
             -- ── Prior year numerators ────────────────────────────────────
-            SUM(CASE WHEN metric_name = 'campaign_created_users'     THEN py ELSE 0 END) AS py_campaign_users,
-            SUM(CASE WHEN metric_name = 'total_campaigns_created'    THEN py ELSE 0 END) AS py_total_campaigns,
-            SUM(CASE WHEN metric_name = 'total_attributable_revenue' THEN py ELSE 0 END) AS py_attributed_rev,
-            SUM(CASE WHEN metric_name = 'RA_Viewed_Users'            THEN py ELSE 0 END) AS py_ra_active_users,
-            SUM(CASE WHEN metric_name = 'automation_created_users'   THEN py ELSE 0 END) AS py_automation_users,
-            SUM(CASE WHEN metric_name = 'total_automations_created'  THEN py ELSE 0 END) AS py_total_automations,
-            SUM(CASE WHEN metric_name = 'segment_created_users'      THEN py ELSE 0 END) AS py_segment_users,
-            SUM(CASE WHEN metric_name = 'total_segments_created'     THEN py ELSE 0 END) AS py_total_segments,
-            SUM(CASE WHEN metric_name = 'actions_taken_users'        THEN py ELSE 0 END) AS py_actions_taken_users,
-            SUM(CASE WHEN metric_name = 'total_actions'              THEN py ELSE 0 END) AS py_total_actions,
+            SUM(CASE WHEN metric_name = 'campaign_created_users'     THEN py_val ELSE 0 END) AS py_campaign_users,
+            SUM(CASE WHEN metric_name = 'total_campaigns_created'    THEN py_val ELSE 0 END) AS py_total_campaigns,
+            SUM(CASE WHEN metric_name = 'total_attributable_revenue' THEN py_val ELSE 0 END) AS py_attributed_rev,
+            SUM(CASE WHEN metric_name = 'RA_Viewed_Users'            THEN py_val ELSE 0 END) AS py_ra_active_users,
+            SUM(CASE WHEN metric_name = 'automation_created_users'   THEN py_val ELSE 0 END) AS py_automation_users,
+            SUM(CASE WHEN metric_name = 'total_automations_created'  THEN py_val ELSE 0 END) AS py_total_automations,
+            SUM(CASE WHEN metric_name = 'segment_created_users'      THEN py_val ELSE 0 END) AS py_segment_users,
+            SUM(CASE WHEN metric_name = 'total_segments_created'     THEN py_val ELSE 0 END) AS py_total_segments,
+            SUM(CASE WHEN metric_name = 'actions_taken_users'        THEN py_val ELSE 0 END) AS py_actions_taken_users,
+            SUM(CASE WHEN metric_name = 'total_actions'              THEN py_val ELSE 0 END) AS py_total_actions,
+            -- Fix 6: null-vs-zero flag for prior year
+            COUNTIF(metric_name = 'campaign_created_users' AND py IS NOT NULL) > 0 AS py_has_data,
 
             -- ── Prior year denominators ──────────────────────────────────
             SUM(CASE WHEN metric_name = 'campaign_created_users'     THEN py_denominator ELSE 0 END) AS py_active_users,
             SUM(CASE WHEN metric_name = 'total_attributable_revenue' THEN py_denominator ELSE 0 END) AS py_total_rev,
 
-            -- ── Prior WEEK numerators (WoW comparison) ──────────────────
-            SUM(CASE WHEN metric_name = 'campaign_created_users'     THEN pw ELSE 0 END) AS pw_campaign_users,
-            SUM(CASE WHEN metric_name = 'total_campaigns_created'    THEN pw ELSE 0 END) AS pw_total_campaigns,
-            SUM(CASE WHEN metric_name = 'total_attributable_revenue' THEN pw ELSE 0 END) AS pw_attributed_rev,
-            SUM(CASE WHEN metric_name = 'RA_Viewed_Users'            THEN pw ELSE 0 END) AS pw_ra_active_users,
-            SUM(CASE WHEN metric_name = 'automation_created_users'   THEN pw ELSE 0 END) AS pw_automation_users,
-            SUM(CASE WHEN metric_name = 'total_automations_created'  THEN pw ELSE 0 END) AS pw_total_automations,
-            SUM(CASE WHEN metric_name = 'segment_created_users'      THEN pw ELSE 0 END) AS pw_segment_users,
-            SUM(CASE WHEN metric_name = 'total_segments_created'     THEN pw ELSE 0 END) AS pw_total_segments,
-            SUM(CASE WHEN metric_name = 'actions_taken_users'        THEN pw ELSE 0 END) AS pw_actions_taken_users,
-            SUM(CASE WHEN metric_name = 'total_actions'              THEN pw ELSE 0 END) AS pw_total_actions,
-
-            -- ── Prior WEEK denominators ──────────────────────────────────
-            SUM(CASE WHEN metric_name = 'campaign_created_users'     THEN pw_denominator ELSE 0 END) AS pw_active_users,
-            SUM(CASE WHEN metric_name = 'total_attributable_revenue' THEN pw_denominator ELSE 0 END) AS pw_total_rev,
+            {pw_pivot}
 
             -- R&A Adoption
             SUM(CASE WHEN metric_name = 'RA_Owned_Viewed_Users'      THEN metric_value ELSE 0 END) AS ra_owned_users,
             SUM(CASE WHEN metric_name = 'RA_Supported_Engaged_Users' THEN metric_value ELSE 0 END) AS ra_supported_users,
-            SUM(CASE WHEN metric_name = 'RA_Owned_Viewed_Users'      THEN py           ELSE 0 END) AS py_ra_owned_users,
-            SUM(CASE WHEN metric_name = 'RA_Supported_Engaged_Users' THEN py           ELSE 0 END) AS py_ra_supported_users,
-            SUM(CASE WHEN metric_name = 'RA_Owned_Viewed_Users'      THEN pw           ELSE 0 END) AS pw_ra_owned_users,
-            SUM(CASE WHEN metric_name = 'RA_Supported_Engaged_Users' THEN pw           ELSE 0 END) AS pw_ra_supported_users
+            SUM(CASE WHEN metric_name = 'RA_Owned_Viewed_Users'      THEN py_val        ELSE 0 END) AS py_ra_owned_users,
+            SUM(CASE WHEN metric_name = 'RA_Supported_Engaged_Users' THEN py_val        ELSE 0 END) AS py_ra_supported_users
 
         FROM filtered
         GROUP BY 1
@@ -199,8 +298,6 @@ def get_metrics():
         total_campaigns,
         campaign_users,
         ra_active_users,
-
-        -- ── I2A expansion raw counts ────────────────────────────────────
         automation_users,
         total_automations,
         segment_users,
@@ -210,67 +307,45 @@ def get_metrics():
         campaign_sent_users,
         total_campaigns_sent,
 
-        -- ── Metric 1: % Attributed Revenue ──────────────────────────────
+        -- ── Rates: current ──────────────────────────────────────────────
         ROUND(SAFE_DIVIDE(attributed_rev,    total_rev)    * 100, 2) AS pct_attributed_rev,
-        ROUND(SAFE_DIVIDE(py_attributed_rev, py_total_rev) * 100, 2) AS py_pct_attributed_rev,
-        ROUND(SAFE_DIVIDE(pw_attributed_rev, pw_total_rev) * 100, 2) AS pw_pct_attributed_rev,
-
-        -- ── Metric 2: % Created Campaign (I2A) ─────────────────────────
         ROUND(SAFE_DIVIDE(campaign_users,    active_users)    * 100, 2) AS pct_campaigns_created,
-        ROUND(SAFE_DIVIDE(py_campaign_users, py_active_users) * 100, 2) AS py_pct_campaigns_created,
-        ROUND(SAFE_DIVIDE(pw_campaign_users, pw_active_users) * 100, 2) AS pw_pct_campaigns_created,
-
-        -- ── Metric 3: Campaigns per User ────────────────────────────────
         ROUND(SAFE_DIVIDE(total_campaigns,    active_users),    2) AS campaigns_per_user,
-        ROUND(SAFE_DIVIDE(py_total_campaigns, py_active_users), 2) AS py_campaigns_per_user,
-        ROUND(SAFE_DIVIDE(pw_total_campaigns, pw_active_users), 2) AS pw_campaigns_per_user,
-
-        -- ── Metric 4: % Created Automation (I2A) ────────────────────────
         ROUND(SAFE_DIVIDE(automation_users,    active_users)    * 100, 2) AS pct_automations_created,
-        ROUND(SAFE_DIVIDE(py_automation_users, py_active_users) * 100, 2) AS py_pct_automations_created,
-        ROUND(SAFE_DIVIDE(pw_automation_users, pw_active_users) * 100, 2) AS pw_pct_automations_created,
-
-        -- ── Metric 5: Automations per User ──────────────────────────────
         ROUND(SAFE_DIVIDE(total_automations,    active_users),    2) AS automations_per_user,
-        ROUND(SAFE_DIVIDE(py_total_automations, py_active_users), 2) AS py_automations_per_user,
-        ROUND(SAFE_DIVIDE(pw_total_automations, pw_active_users), 2) AS pw_automations_per_user,
-
-        -- ── Metric 6: % Created Segment (I2A) ──────────────────────────
         ROUND(SAFE_DIVIDE(segment_users,    active_users)    * 100, 2) AS pct_segments_created,
-        ROUND(SAFE_DIVIDE(py_segment_users, py_active_users) * 100, 2) AS py_pct_segments_created,
-        ROUND(SAFE_DIVIDE(pw_segment_users, pw_active_users) * 100, 2) AS pw_pct_segments_created,
-
-        -- ── Metric 7: Segments per User ─────────────────────────────────
         ROUND(SAFE_DIVIDE(total_segments,    active_users),    2) AS segments_per_user,
-        ROUND(SAFE_DIVIDE(py_total_segments, py_active_users), 2) AS py_segments_per_user,
-        ROUND(SAFE_DIVIDE(pw_total_segments, pw_active_users), 2) AS pw_segments_per_user,
-
-        -- ── Metric 8: % Took Any Action (I2A composite) ────────────────
         ROUND(SAFE_DIVIDE(actions_taken_users,    active_users)    * 100, 2) AS pct_actions_taken,
+
+        -- ── Rates: prior year ───────────────────────────────────────────
+        ROUND(SAFE_DIVIDE(py_attributed_rev, py_total_rev) * 100, 2) AS py_pct_attributed_rev,
+        ROUND(SAFE_DIVIDE(py_campaign_users, py_active_users) * 100, 2) AS py_pct_campaigns_created,
+        ROUND(SAFE_DIVIDE(py_total_campaigns, py_active_users), 2) AS py_campaigns_per_user,
+        ROUND(SAFE_DIVIDE(py_automation_users, py_active_users) * 100, 2) AS py_pct_automations_created,
+        ROUND(SAFE_DIVIDE(py_total_automations, py_active_users), 2) AS py_automations_per_user,
+        ROUND(SAFE_DIVIDE(py_segment_users, py_active_users) * 100, 2) AS py_pct_segments_created,
+        ROUND(SAFE_DIVIDE(py_total_segments, py_active_users), 2) AS py_segments_per_user,
         ROUND(SAFE_DIVIDE(py_actions_taken_users, py_active_users) * 100, 2) AS py_pct_actions_taken,
-        ROUND(SAFE_DIVIDE(pw_actions_taken_users, pw_active_users) * 100, 2) AS pw_pct_actions_taken,
+        py_has_data,
+
+        -- ── Rates: prior week (only for weekly granularity) ─────────────
+        {pw_select}
 
         -- ── R&A Adoption rates ──────────────────────────────────────────
         ra_owned_users,
         ROUND(SAFE_DIVIDE(ra_owned_users,     active_users) * 100, 2) AS pct_ra_owned,
         ROUND(SAFE_DIVIDE(ra_active_users,    active_users) * 100, 2) AS pct_ra_total,
         ROUND(SAFE_DIVIDE(py_ra_owned_users,  py_active_users) * 100, 2) AS py_pct_ra_owned,
-        ROUND(SAFE_DIVIDE(py_ra_active_users, py_active_users) * 100, 2) AS py_pct_ra_total,
-        ROUND(SAFE_DIVIDE(pw_ra_owned_users,  pw_active_users) * 100, 2) AS pw_pct_ra_owned,
-        ROUND(SAFE_DIVIDE(pw_ra_active_users, pw_active_users) * 100, 2) AS pw_pct_ra_total
+        ROUND(SAFE_DIVIDE(py_ra_active_users, py_active_users) * 100, 2) AS py_pct_ra_total
 
     FROM pivoted
     WHERE period_start IS NOT NULL
     ORDER BY period_start ASC
     """
 
-    rows = []
-    for row in client.query(query).result():
-        r = dict(row)
-        if hasattr(r.get("period_start"), "isoformat"):
-            r["period_start"] = r["period_start"].isoformat()
-        rows.append(r)
-
+    rows, err = _run_query(query, f"metrics(ecu={ecu},hvc={hvc},gran={granularity})")
+    if err:
+        return jsonify({"error": f"BigQuery error: {err}"}), 503
     return jsonify(rows)
 
 
@@ -278,14 +353,16 @@ def get_metrics():
 def get_adoption():
     """
     R&A Adoption — de-duplicated union from ECS (bypasses Dataform double-counting).
-    Includes owned pages + supported CTA clicks.
     """
-    ecu, hvc, granularity = _get_filters()
+    ecu, hvc, granularity, errors = _get_filters()
+    if errors:
+        return jsonify({"error": errors}), 400
 
     cache_key = f"adoption|{ecu}|{hvc}|{granularity}"
-    cached = _cache_get(cache_key)
-    if cached is not None:
-        return jsonify(cached)
+    cached, cache_ts, hit = _cache_get(cache_key)
+    if hit:
+        logger.info(f"adoption cache HIT (age={(datetime.datetime.utcnow()-cache_ts).total_seconds():.0f}s)")
+        return _make_response(cached, cache_ts, cache_hit=True)
 
     period_expr = "DATE_TRUNC(b.week, MONTH)" if granularity == "monthly" else "b.week"
 
@@ -399,29 +476,25 @@ def get_adoption():
     ORDER BY 1 ASC
     """
 
-    rows = []
-    for row in client.query(query).result():
-        r = dict(row)
-        if hasattr(r.get("period_start"), "isoformat"):
-            r["period_start"] = r["period_start"].isoformat()
-        rows.append(r)
+    rows, err = _run_query(query, f"adoption(ecu={ecu},hvc={hvc})")
+    if err:
+        return jsonify({"error": f"BigQuery error: {err}"}), 503
 
     _cache_set(cache_key, rows)
-    return jsonify(rows)
+    return _make_response(rows)
 
 
 @app.route("/api/engagement")
 def get_engagement():
-    """
-    Engagement breakdown by page — owned, supported, and combined.
-    Reads L2/L3 metrics from the report table.
-    """
-    ecu, hvc, granularity = _get_filters()
+    """Engagement breakdown by page — owned, supported, and combined."""
+    ecu, hvc, granularity, errors = _get_filters()
+    if errors:
+        return jsonify({"error": errors}), 400
 
     cache_key = f"engagement|{ecu}|{hvc}|{granularity}"
-    cached = _cache_get(cache_key)
-    if cached is not None:
-        return jsonify(cached)
+    cached, cache_ts, hit = _cache_get(cache_key)
+    if hit:
+        return _make_response(cached, cache_ts, cache_hit=True)
 
     all_metrics = ALL_ENGAGEMENT_METRICS + ["RA_Viewed_Users", "RA_Engaged_Users"]
     metrics_sql = _metrics_in_clause(all_metrics)
@@ -444,14 +517,14 @@ def get_engagement():
     ORDER BY 1 ASC, 2
     """
 
+    rows, err = _run_query(query, f"engagement(ecu={ecu},hvc={hvc})")
+    if err:
+        return jsonify({"error": f"BigQuery error: {err}"}), 503
+
     # Pivot into per-period dicts with page-level counts
     period_map = {}
-    for row in client.query(query).result():
-        r = dict(row)
+    for r in rows:
         ps = r["period_start"]
-        if hasattr(ps, "isoformat"):
-            ps = ps.isoformat()
-
         if ps not in period_map:
             period_map[ps] = {
                 "period_start": ps,
@@ -476,7 +549,6 @@ def get_engagement():
             "denominator": denom,
         }
 
-        # Classify into categories using taxonomy
         for display_name, metric_name in ENGAGEMENT_TAXONOMY.get("owned_viewers", {}).items():
             if mn == metric_name:
                 period_map[ps]["owned"][display_name] = entry
@@ -493,37 +565,37 @@ def get_engagement():
             if mn == metric_name:
                 period_map[ps]["combined"][display_name] = entry
 
-    rows = list(period_map.values())
-    rows.sort(key=lambda x: x["period_start"])
+    result = list(period_map.values())
+    result.sort(key=lambda x: x["period_start"])
 
-    _cache_set(cache_key, rows)
-    return jsonify(rows)
+    _cache_set(cache_key, result)
+    return _make_response(result)
 
 
 @app.route("/api/executive-summary")
 def get_executive_summary():
-    """
-    Executive summary — runs analytics engine on metrics data and returns
-    6-8 prioritized insight bullets.
-    """
-    ecu, hvc, granularity = _get_filters()
+    """Executive summary — analytics engine produces 6-8 prioritized insight bullets."""
+    ecu, hvc, granularity, errors = _get_filters()
+    if errors:
+        return jsonify({"error": errors}), 400
+
     compare = request.args.get("compare", "wow")
+    if compare not in VALID_COMPARE:
+        return jsonify({"error": f"Invalid compare: '{compare}'"}), 400
 
     cache_key = f"exec_summary|{ecu}|{hvc}|{granularity}|{compare}"
-    cached = _cache_get(cache_key)
-    if cached is not None:
+    cached, cache_ts, hit = _cache_get(cache_key)
+    if hit:
         return jsonify(cached)
 
-    # Fetch metrics data (reuse the metrics endpoint logic)
-    import json
+    # Fetch metrics data internally
     with app.test_request_context(f"/api/metrics?ecu={ecu}&hvc={hvc}&granularity={granularity}"):
         metrics_response = get_metrics()
         metrics_data = json.loads(metrics_response.get_data())
 
     if not metrics_data:
-        return jsonify({"period": None, "summary": []})
+        return jsonify({"period": None, "comparison_mode": compare, "summary": [], "analytics": {}})
 
-    # Define metric keys for analysis
     rate_keys = [
         "pct_attributed_rev", "pct_campaigns_created", "campaigns_per_user",
         "pct_automations_created", "automations_per_user",
@@ -531,11 +603,9 @@ def get_executive_summary():
         "pct_actions_taken", "pct_ra_owned", "pct_ra_total",
     ]
 
-    # Compute analytics
     trends = compute_trends(metrics_data, rate_keys)
     anomalies = detect_anomalies(metrics_data, rate_keys)
 
-    # Segment analysis — fetch ECU and HVC slices if currently on "all"
     segment_data = {}
     if ecu == "all":
         for seg_val, seg_name in [("ecu", "ECU"), ("non_ecu", "Non-ECU")]:
@@ -549,30 +619,28 @@ def get_executive_summary():
 
     segments = analyze_segments(segment_data, rate_keys) if segment_data else []
 
-    # Funnel analysis — use latest period
     latest = metrics_data[-1] if metrics_data else {}
     funnel_data = {
         "active_users": latest.get("active_users", 0),
         "ra_viewed_users": latest.get("ra_active_users", 0),
         "ra_owned_users": latest.get("ra_owned_users", 0),
-        "ra_engaged_users": 0,  # Not directly in metrics endpoint
+        "ra_engaged_users": 0,
         "actions_taken_users": latest.get("actions_taken_users", 0),
     }
     funnel = compute_funnel(funnel_data)
 
-    # Correlation analysis
-    engagement_keys = ["pct_ra_owned", "pct_ra_total"]
-    outcome_keys = ["pct_campaigns_created", "pct_actions_taken"]
-    correlations = compute_correlations(metrics_data, engagement_keys, outcome_keys)
+    correlations = compute_correlations(
+        metrics_data, ["pct_ra_owned", "pct_ra_total"],
+        ["pct_campaigns_created", "pct_actions_taken"],
+    )
 
-    # Generate summary
     summary = generate_executive_summary(
         trends, anomalies, segments, funnel, correlations,
         comparison_mode=compare,
     )
 
     result = {
-        "period": metrics_data[-1].get("period_start") if metrics_data else None,
+        "period": latest.get("period_start"),
         "comparison_mode": compare,
         "summary": summary,
         "analytics": {
