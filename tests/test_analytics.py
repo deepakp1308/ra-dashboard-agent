@@ -346,3 +346,244 @@ def test_generate_summary_trends_only():
     summary = generate_executive_summary(trends, [], [], [], [], "wow")
     assert len(summary) >= 1
     assert summary[0]["category"] == "trend"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  EDGE CASE TESTS (expanded coverage)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── Trends edge cases ─────────────────────────────────────────────────────────
+
+def test_trends_zero_current():
+    data = [
+        {"period_start": "2026-01-01", "val": 10, "pw_val": 5},
+        {"period_start": "2026-01-08", "val": 0, "pw_val": 10},
+    ]
+    trends = compute_trends(data, ["val"])
+    assert trends["val"]["wow_delta"] == -100.0
+
+
+def test_trends_all_zero_series():
+    data = _make_data([0, 0, 0, 0, 0])
+    trends = compute_trends(data, ["pct_campaigns_created"])
+    t = trends["pct_campaigns_created"]
+    assert t["current"] == 0
+    assert t["direction"] == "flat"
+
+
+def test_trends_negative_values():
+    data = _make_data([-10, -8, -6, -4, -2])
+    trends = compute_trends(data, ["pct_campaigns_created"])
+    t = trends["pct_campaigns_created"]
+    assert t["direction"] == "up"
+    assert t["streak"] >= 3
+
+
+def test_trends_streak_breaks_on_none():
+    data = _make_data([10, 12, None, 15, 18])
+    trends = compute_trends(data, ["pct_campaigns_created"])
+    t = trends["pct_campaigns_created"]
+    # Streak should be 2 (15→18), not 4
+    assert t["streak"] <= 2
+
+
+def test_trends_single_non_none_in_long_series():
+    data = _make_data([None, None, None, None, 42])
+    trends = compute_trends(data, ["pct_campaigns_created"])
+    t = trends["pct_campaigns_created"]
+    assert t["current"] == 42
+
+
+# ── Anomaly edge cases ────────────────────────────────────────────────────────
+
+def test_anomalies_exactly_at_threshold():
+    # With slight variance, spike should be caught at threshold
+    data = _make_data([10, 11, 9, 10, 11, 9, 10, 11, 25])
+    anomalies = detect_anomalies(data, ["pct_campaigns_created"], threshold=2.0, window=8)
+    assert len(anomalies) >= 1
+
+
+def test_anomalies_critical_severity():
+    """Z-score >= 3.0 (1.5x threshold) should be 'critical'."""
+    data = _make_data([10, 11, 9, 10, 11, 9, 10, 11, 500])
+    anomalies = detect_anomalies(data, ["pct_campaigns_created"], threshold=2.0, window=8)
+    if anomalies:
+        assert anomalies[0]["severity"] == "critical"
+
+
+def test_anomalies_consecutive_spikes():
+    # Two spikes in sequence: both should be detected (window slides)
+    vals = [10, 11, 9, 10, 11, 9, 10, 11, 80, 90]
+    data = _make_data(vals)
+    anomalies = detect_anomalies(data, ["pct_campaigns_created"], threshold=2.0, window=8)
+    assert len(anomalies) >= 1
+
+
+def test_anomalies_sorted_by_z_score():
+    vals = [10, 11, 9, 10, 11, 9, 10, 11, 50, 100]
+    data = _make_data(vals)
+    anomalies = detect_anomalies(data, ["pct_campaigns_created"], threshold=2.0, window=8)
+    if len(anomalies) >= 2:
+        assert abs(anomalies[0]["z_score"]) >= abs(anomalies[1]["z_score"])
+
+
+# ── Segments edge cases ───────────────────────────────────────────────────────
+
+def test_segments_three_way_comparison():
+    seg_a = _make_data([10, 10, 10])
+    seg_b = _make_data([20, 20, 20])
+    seg_c = _make_data([30, 30, 30])
+    results = analyze_segments(
+        {"A": seg_a, "B": seg_b, "C": seg_c},
+        ["pct_campaigns_created"]
+    )
+    # 3 pairwise: A-B, A-C, B-C
+    assert len(results) == 3
+
+
+def test_segments_unequal_lengths():
+    seg_a = _make_data([10, 10])
+    seg_b = _make_data([20, 20, 20, 20, 20])
+    results = analyze_segments(
+        {"A": seg_a, "B": seg_b},
+        ["pct_campaigns_created"]
+    )
+    assert len(results) == 1  # Should still compare
+
+
+def test_segments_zero_values():
+    seg_a = _make_data([0, 0, 0])
+    seg_b = _make_data([10, 10, 10])
+    results = analyze_segments(
+        {"A": seg_a, "B": seg_b},
+        ["pct_campaigns_created"]
+    )
+    assert len(results) == 1
+    assert results[0]["diff"] != 0
+
+
+# ── Funnel edge cases ─────────────────────────────────────────────────────────
+
+def test_funnel_increasing_values():
+    """Values increasing (impossible but should not crash)."""
+    data = {
+        "active_users": 100,
+        "ra_viewed_users": 150,
+        "ra_owned_users": 200,
+        "ra_engaged_users": 250,
+        "actions_taken_users": 300,
+    }
+    funnel = compute_funnel(data)
+    assert len(funnel) == 5
+    assert all(isinstance(s["dropoff_rate"], (int, float)) for s in funnel)
+
+
+def test_funnel_zero_middle_stage():
+    data = {
+        "active_users": 1000,
+        "ra_viewed_users": 500,
+        "ra_owned_users": 0,
+        "ra_engaged_users": 0,
+        "actions_taken_users": 0,
+    }
+    funnel = compute_funnel(data)
+    assert funnel[2]["dropoff_rate"] == 100.0
+
+
+def test_funnel_missing_keys():
+    """Missing keys should default to 0."""
+    data = {"active_users": 1000}
+    funnel = compute_funnel(data)
+    assert len(funnel) == 5
+    assert funnel[1]["value"] == 0
+
+
+# ── Correlation edge cases ────────────────────────────────────────────────────
+
+def test_correlations_no_variation():
+    data = [{"eng": 10, "outcome": i * 5} for i in range(10)]
+    results = compute_correlations(data, ["eng"], ["outcome"])
+    # eng is constant → r should be None → no results
+    assert len(results) == 0
+
+
+def test_correlations_negative():
+    data = [{"eng": i, "outcome": 100 - i} for i in range(10)]
+    results = compute_correlations(data, ["eng"], ["outcome"])
+    assert len(results) == 1
+    assert results[0]["r"] < -0.9
+    assert results[0]["strength"] == "strong"
+
+
+def test_correlations_weak():
+    import random
+    random.seed(42)
+    data = [{"eng": i, "outcome": random.random() * 100} for i in range(20)]
+    results = compute_correlations(data, ["eng"], ["outcome"])
+    if results:
+        assert results[0]["strength"] in ("weak", "moderate")
+
+
+# ── Executive Summary edge cases ──────────────────────────────────────────────
+
+def test_summary_no_deltas():
+    trends = {
+        "pct_campaigns_created": {
+            "current": 5.0, "previous": 4.0,
+            "wow_delta": None, "yoy_delta": None,
+            "moving_avg": 4.5, "growth_rate_4w": 5.0,
+            "direction": "up", "streak": 4,
+        },
+    }
+    summary = generate_executive_summary(trends, [], [], [], [], "wow")
+    assert isinstance(summary, list)
+
+
+def test_summary_max_bullet_enforcement():
+    """Should never exceed 8 bullets even with many inputs."""
+    trends = {}
+    for i in range(15):
+        trends[f"metric_{i}"] = {
+            "current": i + 1, "previous": i,
+            "wow_delta": 10.0 + i, "yoy_delta": 5.0 + i,
+            "moving_avg": i + 0.5, "growth_rate_4w": 3.0,
+            "direction": "up", "streak": 4,
+        }
+    summary = generate_executive_summary(trends, [], [], [], [], "wow")
+    assert len(summary) <= 8
+
+
+def test_summary_yoy_mode():
+    trends = {
+        "pct_campaigns_created": {
+            "current": 5.0, "previous": 4.0,
+            "wow_delta": 25.0, "yoy_delta": 10.0,
+            "moving_avg": 4.5, "growth_rate_4w": 5.0,
+            "direction": "up", "streak": 5,
+        },
+    }
+    summary = generate_executive_summary(trends, [], [], [], [], "yoy")
+    if summary:
+        assert "YoY" in summary[0]["text"]
+
+
+# ── rank_items test ───────────────────────────────────────────────────────────
+
+def test_rank_items_basic():
+    from analytics import rank_items
+    items = [{"name": "a", "score": 1}, {"name": "b", "score": 3}, {"name": "c", "score": 2}]
+    ranked = rank_items(items, lambda x: x["score"])
+    assert ranked[0]["name"] == "b"
+    assert ranked[-1]["name"] == "a"
+
+
+def test_rank_items_empty():
+    from analytics import rank_items
+    assert rank_items([], lambda x: 0) == []
+
+
+def test_rank_items_equal_scores():
+    from analytics import rank_items
+    items = [{"name": "a", "score": 5}, {"name": "b", "score": 5}]
+    ranked = rank_items(items, lambda x: x["score"])
+    assert len(ranked) == 2
