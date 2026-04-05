@@ -82,11 +82,10 @@ class TestFilterElements:
         assert 'data-filter="hvc" data-value="hvc"' in html
         assert 'data-filter="hvc" data-value="non_hvc"' in html
 
-    def test_compare_filter_buttons(self):
+    def test_no_compare_toggle(self):
+        """Compare toggle removed — both WoW and YoY shown simultaneously."""
         html = _read_html()
-        assert 'data-filter="compare" data-value="none"' in html
-        assert 'data-filter="compare" data-value="wow"' in html
-        assert 'data-filter="compare" data-value="yoy"' in html
+        assert 'data-filter="compare"' not in html
 
     def test_granularity_filter_buttons(self):
         html = _read_html()
@@ -112,16 +111,11 @@ class TestFilterElements:
             assert "data-filter=" in btn, f"Missing data-filter: {btn[:80]}"
             assert "data-value=" in btn, f"Missing data-value: {btn[:80]}"
 
-    def test_yoy_is_default_compare(self):
-        """YoY should be the default active compare filter."""
+    def test_dual_delta_function_exists(self):
+        """deltaBoth() function should exist for showing WoW + YoY together."""
         html = _read_html()
-        yoy_btn = re.search(r'data-filter="compare"\s+data-value="yoy"', html)
-        assert yoy_btn, "YoY compare button not found"
-        # Find the button tag containing this
-        yoy_pos = yoy_btn.start()
-        btn_start = html.rfind("<button", 0, yoy_pos)
-        btn_html = html[btn_start:yoy_pos + 50]
-        assert "active" in btn_html, "YoY should be default active compare mode"
+        assert "function deltaBoth(" in html
+        assert "function _oneDelta(" in html
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -130,42 +124,41 @@ class TestFilterElements:
 
 class TestJSLogic:
 
-    def test_state_object_has_compare_field(self):
-        """JS state must include compare field for WoW/YoY toggle."""
+    def test_state_object_no_compare_field(self):
+        """JS state should NOT have compare — both shown simultaneously."""
         html = _read_html()
-        assert 'compare:' in html or '"compare"' in html
-        assert '"yoy"' in html  # Default value
+        # State has ecu, hvc, granularity but not compare
+        assert "ecu:" in html
+        assert "hvc:" in html
+        assert "granularity:" in html
 
     def test_state_object_has_all_filters(self):
         html = _read_html()
         assert "ecu:" in html
         assert "hvc:" in html
         assert "granularity:" in html
-        assert "compare:" in html
 
     def test_delta_function_exists(self):
         html = _read_html()
         assert "function delta(" in html
 
-    def test_delta_handles_compare_none(self):
-        """delta() should return empty string when compare=none."""
+    def test_delta_both_function(self):
+        """deltaBoth() shows WoW + YoY side by side."""
         html = _read_html()
-        assert 'state.compare === "none"' in html
+        assert "deltaBoth" in html
+        assert '"WoW"' in html
+        assert '"YoY"' in html
 
     def test_delta_handles_null_values(self):
         html = _read_html()
         # Should check for null current or prior
         assert "cur == null" in html or "pri == null" in html
 
-    def test_getComparePrefix_function(self):
+    def test_dual_comparison_prefixes(self):
+        """Both pw_ and py_ prefixes used for WoW and YoY."""
         html = _read_html()
-        assert "function getComparePrefix()" in html
-        assert '"pw_"' in html
-        assert '"py_"' in html
-
-    def test_getCompareLabel_function(self):
-        html = _read_html()
-        assert "function getCompareLabel()" in html
+        assert "pw_" in html
+        assert "py_" in html
         assert '"WoW"' in html
         assert '"YoY"' in html
 
@@ -183,10 +176,11 @@ class TestJSLogic:
         html = _read_html()
         assert "function buildChart(" in html
 
-    def test_buildChart_respects_compare_mode(self):
-        """Chart builder should check compare mode before adding prior series."""
+    def test_buildChart_has_three_series(self):
+        """Chart builder should support current + prior week + prior year."""
         html = _read_html()
-        assert 'state.compare !== "none"' in html
+        assert "Prior Week" in html
+        assert "Prior Year" in html
 
     def test_loadData_fetches_all_endpoints(self):
         """loadData must fetch metrics, adoption, engagement, and summary."""

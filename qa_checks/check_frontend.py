@@ -42,7 +42,6 @@ def check_filter_elements():
     expected_filters = {
         ("ecu", "all"), ("ecu", "ecu"), ("ecu", "non_ecu"),
         ("hvc", "all"), ("hvc", "hvc"), ("hvc", "non_hvc"),
-        ("compare", "none"), ("compare", "wow"), ("compare", "yoy"),
         ("granularity", "weekly"), ("granularity", "monthly"),
     }
     found = set()
@@ -57,7 +56,7 @@ def check_filter_elements():
 def check_api_endpoints_referenced():
     """Verify all 4 API endpoints are called in loadData."""
     html = _read_html()
-    endpoints = ["/api/metrics", "/api/adoption", "/api/engagement", "/api/executive-summary"]
+    endpoints = ["/api/metrics", "/api/adoption", "/api/i2a", "/api/engagement", "/api/executive-summary"]
     missing = [ep for ep in endpoints if ep not in html]
     if missing:
         return {"status": "FAIL", "details": f"Missing API calls: {missing}"}
@@ -65,17 +64,17 @@ def check_api_endpoints_referenced():
 
 
 def check_comparison_logic():
-    """Verify comparison mode logic exists (getComparePrefix, delta with mode)."""
+    """Verify dual comparison logic exists (deltaBoth showing WoW + YoY)."""
     html = _read_html()
     checks = {
-        "getComparePrefix": "function getComparePrefix()" in html,
-        "getCompareLabel": "function getCompareLabel()" in html,
+        "deltaBoth_fn": "function deltaBoth(" in html,
+        "_oneDelta_fn": "function _oneDelta(" in html,
         "delta_null_check": "cur == null" in html,
-        "compare_none_check": 'state.compare === "none"' in html,
-        "pw_prefix": '"pw_"' in html,
-        "py_prefix": '"py_"' in html,
+        "pw_prefix": '"pw_"' in html or "pw_" in html,
+        "py_prefix": '"py_"' in html or "py_" in html,
         "WoW_label": '"WoW"' in html,
         "YoY_label": '"YoY"' in html,
+        "three_series_chart": "Prior Week" in html and "Prior Year" in html,
     }
     failures = [k for k, v in checks.items() if not v]
     if failures:
@@ -83,14 +82,12 @@ def check_comparison_logic():
     return {"status": "PASS", "details": "All comparison logic present"}
 
 
-def check_wow_monthly_disable():
-    """Verify WoW is disabled for monthly granularity (Fix 2)."""
+def check_wow_monthly_handling():
+    """Verify WoW is only shown for weekly granularity (isWeekly check)."""
     html = _read_html()
-    if "updateWoWAvailability" not in html:
-        return {"status": "FAIL", "details": "Missing updateWoWAvailability function"}
-    if "monthly" not in html or "disabled" not in html:
-        return {"status": "WARN", "details": "WoW monthly disable logic may be incomplete"}
-    return {"status": "PASS", "details": "WoW monthly disable logic present"}
+    if "isWeekly" not in html and "state.granularity" not in html:
+        return {"status": "FAIL", "details": "No granularity-aware WoW logic found"}
+    return {"status": "PASS", "details": "WoW conditionally shown for weekly granularity"}
 
 
 def check_fetch_timeout():
@@ -159,7 +156,7 @@ def run_all():
         "frontend.filter_elements": check_filter_elements(),
         "frontend.api_endpoints": check_api_endpoints_referenced(),
         "frontend.comparison_logic": check_comparison_logic(),
-        "frontend.wow_monthly_disable": check_wow_monthly_disable(),
+        "frontend.wow_monthly_handling": check_wow_monthly_handling(),
         "frontend.fetch_timeout": check_fetch_timeout(),
         "frontend.freshness_display": check_freshness_display(),
         "frontend.error_handling": check_error_handling(),

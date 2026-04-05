@@ -394,12 +394,6 @@ body { background: var(--bg); font-family: var(--font); color: var(--text); min-
     <button class="filter-btn" data-filter="hvc" data-value="non_hvc">Non-HVC</button>
   </div>
   <div class="filter-group">
-    <label>Compare</label>
-    <button class="filter-btn" data-filter="compare" data-value="none">None</button>
-    <button class="filter-btn" data-filter="compare" data-value="wow">WoW</button>
-    <button class="filter-btn active" data-filter="compare" data-value="yoy">YoY</button>
-  </div>
-  <div class="filter-group">
     <label>Granularity</label>
     <button class="filter-btn active" data-filter="granularity" data-value="weekly">Weekly</button>
     <button class="filter-btn" data-filter="granularity" data-value="monthly">Monthly</button>
@@ -432,7 +426,7 @@ body { background: var(--bg); font-family: var(--font); color: var(--text); min-
 // ═══════════════════════════════════════════════════════════════════════════════
 //  STATE & CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════════
-const state = { ecu: "all", hvc: "all", granularity: "weekly", compare: "yoy" };
+const state = { ecu: "all", hvc: "all", granularity: "weekly" };
 const chartInstances = {};
 let currentTab = "overview";
 let engagementTab = "all";
@@ -461,28 +455,10 @@ document.querySelectorAll(".filter-btn:not(.disabled)").forEach(btn => {
     document.querySelectorAll(`.filter-btn[data-filter="${filter}"]`)
       .forEach(b => b.classList.remove("active"));
     btn.classList.add("active");
-    // Fix 2: Monthly granularity disables WoW (pw_ columns are weekly LAGs, not monthly)
-    updateWoWAvailability();
     loadData();
   });
 });
 
-function updateWoWAvailability() {
-  const wowBtn = document.querySelector('[data-filter="compare"][data-value="wow"]');
-  if (!wowBtn) return;
-  if (state.granularity === "monthly") {
-    wowBtn.classList.add("disabled");
-    wowBtn.title = "WoW comparison not available for monthly granularity";
-    if (state.compare === "wow") {
-      state.compare = "yoy";
-      wowBtn.classList.remove("active");
-      document.querySelector('[data-filter="compare"][data-value="yoy"]').classList.add("active");
-    }
-  } else {
-    wowBtn.classList.remove("disabled");
-    wowBtn.title = "";
-  }
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  FORMATTERS
@@ -511,29 +487,32 @@ function fmtDate(s) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  COMPARISON UTILITIES
+//  COMPARISON UTILITIES — show BOTH WoW and YoY simultaneously
 // ═══════════════════════════════════════════════════════════════════════════════
-function getComparePrefix() {
-  return state.compare === "wow" ? "pw_" : "py_";
-}
-function getCompareLabel() {
-  return state.compare === "wow" ? "WoW" : state.compare === "yoy" ? "YoY" : "";
-}
-function getPriorSeriesLabel() {
-  return state.compare === "wow" ? "Prior Week" : "Prior Year";
-}
-
-function delta(cur, pri, isRatio = false) {
-  if (state.compare === "none" || cur == null || pri == null || pri === 0)
-    return state.compare === "none" ? "" : `<span class="kpi-delta flat">No prior data</span>`;
+function _oneDelta(cur, pri, label, isRatio = false) {
+  if (cur == null || pri == null || pri === 0)
+    return `<span class="kpi-delta flat">No ${label} data</span>`;
   const diff = cur - pri;
   const cls  = diff > 0 ? "up" : diff < 0 ? "down" : "flat";
   const arrow = diff > 0 ? "▲" : diff < 0 ? "▼" : "—";
   const sign  = diff > 0 ? "+" : "";
-  const label = isRatio
-    ? `${sign}${diff.toFixed(2)} ${getCompareLabel()}`
-    : `${sign}${diff.toFixed(1)} pp ${getCompareLabel()}`;
-  return `<span class="kpi-delta ${cls}">${arrow} ${label}</span>`;
+  const val = isRatio
+    ? `${sign}${diff.toFixed(2)} ${label}`
+    : `${sign}${diff.toFixed(1)} pp ${label}`;
+  return `<span class="kpi-delta ${cls}">${arrow} ${val}</span>`;
+}
+
+function deltaBoth(cur, pw, py, isRatio = false) {
+  const isWeekly = state.granularity === "weekly";
+  let html = "";
+  if (isWeekly && pw != null) html += _oneDelta(cur, pw, "WoW", isRatio) + " ";
+  html += _oneDelta(cur, py, "YoY", isRatio);
+  return html;
+}
+
+// Back-compat: single delta for places that need it
+function delta(cur, pri, isRatio = false, label = "YoY") {
+  return _oneDelta(cur, pri, label, isRatio);
 }
 
 function latest(data, key) {
@@ -551,16 +530,17 @@ function latestPrior(data, key) {
 // ═══════════════════════════════════════════════════════════════════════════════
 //  CHART BUILDER (supports comparison modes)
 // ═══════════════════════════════════════════════════════════════════════════════
-function buildChart(id, labels, current, prior, fmt, opts = {}) {
+function buildChart(id, labels, current, priorWeek, priorYear, fmt, opts = {}) {
   if (chartInstances[id]) { chartInstances[id].destroy(); delete chartInstances[id]; }
   const el = document.getElementById(id);
   if (!el) return;
   const ctx = el.getContext("2d");
+  const isWeekly = state.granularity === "weekly";
 
   const datasets = [{
     label: "Current",
     data: current,
-    borderColor: opts.color || "var(--chart-navy)",
+    borderColor: opts.color || "#1e3a6e",
     backgroundColor: opts.fill ? (opts.fillColor || "rgba(30,58,110,.06)") : "transparent",
     borderWidth: 2.5,
     pointRadius: 2,
@@ -571,14 +551,32 @@ function buildChart(id, labels, current, prior, fmt, opts = {}) {
     spanGaps: true,
   }];
 
-  if (state.compare !== "none" && prior) {
+  // Prior Week (WoW) — only for weekly granularity
+  if (isWeekly && priorWeek) {
     datasets.push({
-      label: getPriorSeriesLabel(),
-      data: prior,
+      label: "Prior Week",
+      data: priorWeek,
+      borderColor: "#00b9a9",
+      backgroundColor: "transparent",
+      borderWidth: 1.5,
+      borderDash: [3, 3],
+      pointRadius: 0,
+      pointHoverRadius: 4,
+      tension: 0.35,
+      fill: false,
+      spanGaps: true,
+    });
+  }
+
+  // Prior Year (YoY)
+  if (priorYear) {
+    datasets.push({
+      label: "Prior Year",
+      data: priorYear,
       borderColor: "#94a3b8",
       backgroundColor: "transparent",
       borderWidth: 1.5,
-      borderDash: [5, 4],
+      borderDash: [6, 4],
       pointRadius: 0,
       pointHoverRadius: 4,
       tension: 0.35,
@@ -724,44 +722,47 @@ function renderExecSummary(summaryData) {
 // ═══════════════════════════════════════════════════════════════════════════════
 //  KPI GRID RENDERER (Page 1 — mini cards)
 // ═══════════════════════════════════════════════════════════════════════════════
-function renderKPIGrid(data) {
+function renderKPIGrid(data, i2aData) {
   const el = document.getElementById("kpi-grid-container");
   const noEcomm = state.ecu === "non_ecu";
-  const prefix = getComparePrefix();
 
   const revPct = latest(data, "pct_attributed_rev");
-  const priorRevPct = latest(data, prefix + "pct_attributed_rev");
+  const pwRevPct = latest(data, "pw_pct_attributed_rev");
+  const pyRevPct = latest(data, "py_pct_attributed_rev");
 
-  const campPct = latest(data, "pct_campaigns_created");
-  const priorCampPct = latest(data, prefix + "pct_campaigns_created");
+  const campPct = latest(i2aData, "pct_campaigns_created");
+  const pwCampPct = latest(i2aData, "pw_pct_campaigns_created");
+  const pyCampPct = latest(i2aData, "py_pct_campaigns_created");
 
-  const actionsPct = latest(data, "pct_actions_taken");
-  const priorActionsPct = latest(data, prefix + "pct_actions_taken");
+  const actionsPct = latest(i2aData, "pct_actions_taken");
+  const pwActionsPct = latest(i2aData, "pw_pct_actions_taken");
+  const pyActionsPct = latest(i2aData, "py_pct_actions_taken");
 
   const raTotal = latest(data, "pct_ra_total");
-  const priorRaTotal = latest(data, prefix + "pct_ra_total");
+  const pwRaTotal = latest(data, "pw_pct_ra_total");
+  const pyRaTotal = latest(data, "py_pct_ra_total");
 
   el.innerHTML = `
     <div class="kpi-grid">
       <div class="kpi-mini">
         <div class="kpi-mini-label">% Attributed Revenue</div>
         <div class="kpi-mini-value">${noEcomm ? "N/A" : fmtPct(revPct)}</div>
-        <div class="kpi-mini-delta">${noEcomm ? "" : delta(revPct, priorRevPct)}</div>
+        <div class="kpi-mini-delta">${noEcomm ? "" : deltaBoth(revPct, pwRevPct, pyRevPct)}</div>
       </div>
       <div class="kpi-mini">
-        <div class="kpi-mini-label">% Created Campaign</div>
+        <div class="kpi-mini-label">% Created Campaign (7d)</div>
         <div class="kpi-mini-value">${fmtPct(campPct)}</div>
-        <div class="kpi-mini-delta">${delta(campPct, priorCampPct)}</div>
+        <div class="kpi-mini-delta">${deltaBoth(campPct, pwCampPct, pyCampPct)}</div>
       </div>
       <div class="kpi-mini">
-        <div class="kpi-mini-label">% Took Any Action (I2A)</div>
+        <div class="kpi-mini-label">% Any Action I2A (7d)</div>
         <div class="kpi-mini-value">${fmtPct(actionsPct)}</div>
-        <div class="kpi-mini-delta">${delta(actionsPct, priorActionsPct)}</div>
+        <div class="kpi-mini-delta">${deltaBoth(actionsPct, pwActionsPct, pyActionsPct)}</div>
       </div>
       <div class="kpi-mini">
         <div class="kpi-mini-label">R&A Adoption</div>
         <div class="kpi-mini-value">${fmtPct(raTotal)}</div>
-        <div class="kpi-mini-delta">${delta(raTotal, priorRaTotal)}</div>
+        <div class="kpi-mini-delta">${deltaBoth(raTotal, pwRaTotal, pyRaTotal)}</div>
       </div>
     </div>
   `;
@@ -770,30 +771,42 @@ function renderKPIGrid(data) {
 // ═══════════════════════════════════════════════════════════════════════════════
 //  OVERVIEW CHARTS (Page 1)
 // ═══════════════════════════════════════════════════════════════════════════════
-function renderOverviewCharts(data, adoptionMap) {
+function renderOverviewCharts(data, adoptionMap, i2aData) {
   const el = document.getElementById("overview-charts");
   const labels = data.map(d => fmtDate(d.period_start));
   const noEcomm = state.ecu === "non_ecu";
-  const prefix = getComparePrefix();
+  const isWeekly = state.granularity === "weekly";
 
-  // Latest values for context
+  // Latest values
   const revPct = latest(data, "pct_attributed_rev");
-  const priorRevPct = latest(data, prefix + "pct_attributed_rev");
+  const pwRevPct = latest(data, "pw_pct_attributed_rev");
+  const pyRevPct = latest(data, "py_pct_attributed_rev");
   const attribRev = latest(data, "attributed_rev");
   const totalRev = latest(data, "total_rev");
-  const campPct = latest(data, "pct_campaigns_created");
-  const priorCampPct = latest(data, prefix + "pct_campaigns_created");
-  const campUsers = latest(data, "campaign_users");
   const activeU = latest(data, "active_users");
-  const cpu = latest(data, "campaigns_per_user");
-  const priorCpu = latest(data, prefix + "campaigns_per_user");
-  const totalCamp = latest(data, "total_campaigns");
+
+  // I2A from 7-day window endpoint
+  const campPct = latest(i2aData, "pct_campaigns_created");
+  const pwCampPct = latest(i2aData, "pw_pct_campaigns_created");
+  const pyCampPct = latest(i2aData, "py_pct_campaigns_created");
+  const campUsers = latest(i2aData, "campaign_users");
+  const cpu = latest(i2aData, "campaigns_per_user");
+  const pwCpu = latest(i2aData, "pw_campaigns_per_user");
+  const pyCpu = latest(i2aData, "py_campaigns_per_user");
+  const totalCamp = latest(i2aData, "total_campaigns");
 
   // Adoption
   const adoptionRows = [...adoptionMap.values()];
   const latestAdoption = adoptionRows.length ? adoptionRows[adoptionRows.length - 1] : null;
   const raTotalPct = latestAdoption?.pct_ra_total ?? null;
   const raOwnedPct = latestAdoption?.pct_ra_owned ?? null;
+
+  const legendHtml = `
+    <div class="chart-legend">
+      <div class="legend-item"><div class="leg-line current"></div> Current</div>
+      ${isWeekly ? '<div class="legend-item"><div class="leg-line" style="background:#00b9a9;"></div> Prior Week</div>' : ''}
+      <div class="legend-item"><div class="leg-line prior"></div> Prior Year</div>
+    </div>`;
 
   el.innerHTML = `
     <!-- % Attributed Revenue -->
@@ -804,74 +817,62 @@ function renderOverviewCharts(data, adoptionMap) {
       </div>
       <div class="kpi-row">
         <div class="kpi-value">${noEcomm ? "N/A" : fmtPct(revPct)}</div>
-        ${noEcomm ? "" : delta(revPct, priorRevPct)}
+        ${noEcomm ? "" : deltaBoth(revPct, pwRevPct, pyRevPct)}
         ${!noEcomm && attribRev != null ? `<div class="kpi-context">${fmtCurrency(attribRev)} attributed / ${fmtCurrency(totalRev)} total GMV</div>` : ""}
       </div>
       ${noEcomm ? `<div class="na-note">Attributed revenue is only tracked for ecommerce-connected users. Switch to <strong>All</strong> or <strong>ECU</strong>.</div>` : ""}
-      <div class="chart-legend">
-        <div class="legend-item"><div class="leg-line current"></div> Current</div>
-        ${state.compare !== "none" ? `<div class="legend-item"><div class="leg-line prior"></div> ${getPriorSeriesLabel()}</div>` : ""}
-      </div>
+      ${legendHtml}
       <div class="chart-wrap"><canvas id="chart-rev"></canvas></div>
       <div class="glossary">
         <button class="glossary-toggle" onclick="toggleGlossary(this)">▶ How this is calculated</button>
         <div class="glossary-body">
           <strong>Formula:</strong> MC Attributed Revenue ÷ Total GMV × 100<br>
-          <strong>Numerator:</strong> Revenue attributed to a Mailchimp campaign for ECU users on Shopify, WooCommerce, Wix, BigCommerce, Nuvemshop, ShopSync.<br>
-          <strong>Denominator:</strong> Total GMV across same platforms.<br>
           <strong>Source:</strong> <code>rpt_RA_L1L3_Test_03_04</code> via <code>ecommerce_orders_daily_rollups_tmp</code>
         </div>
       </div>
     </div>
 
-    <!-- % Created Campaign -->
+    <!-- % Created Campaign (7-day window) -->
     <div class="metric-card">
       <div class="card-top">
-        <div class="card-title">Insight to Action: % of Active Users Who Created a Campaign</div>
-        <div class="card-subtitle">Users who created a campaign within 1 day of first viewing any R&A product that week</div>
+        <div class="card-title">Insight to Action: % Created Campaign</div>
+        <div class="card-subtitle">Users who created a campaign within <strong>7 days</strong> of first viewing any R&A product that week</div>
       </div>
       <div class="kpi-row">
         <div class="kpi-value">${fmtPct(campPct)}</div>
-        ${delta(campPct, priorCampPct)}
-        ${campUsers != null ? `<div class="kpi-context">${fmtCount(campUsers)} users / ${fmtCount(activeU)} WAU</div>` : ""}
+        ${deltaBoth(campPct, pwCampPct, pyCampPct)}
+        ${campUsers != null ? `<div class="kpi-context">${fmtCount(campUsers)} users / ${fmtCount(latest(i2aData, "active_users"))} WAU</div>` : ""}
       </div>
-      <div class="chart-legend">
-        <div class="legend-item"><div class="leg-line current"></div> Current</div>
-        ${state.compare !== "none" ? `<div class="legend-item"><div class="leg-line prior"></div> ${getPriorSeriesLabel()}</div>` : ""}
-      </div>
+      ${legendHtml}
       <div class="chart-wrap"><canvas id="chart-camp-pct"></canvas></div>
       <div class="glossary">
         <button class="glossary-toggle" onclick="toggleGlossary(this)">▶ How this is calculated</button>
         <div class="glossary-body">
           <strong>Formula:</strong> Campaign Created Users ÷ WAU × 100<br>
-          <strong>Window:</strong> Campaign must be created within 1 day of user's first R&A view that week.<br>
-          <strong>Source:</strong> <code>rpt_RA_L1L3_Test_03_04</code> as <code>campaign_created_users</code>
+          <strong>Window:</strong> 7 days from user's first R&A view that week.<br>
+          <strong>Source:</strong> Direct query on <code>emails_bulk</code> joined to R&A views from <code>ecs_users_activities</code>
         </div>
       </div>
     </div>
 
-    <!-- Campaigns per User -->
+    <!-- Campaigns per User (7-day window) -->
     <div class="metric-card">
       <div class="card-top">
-        <div class="card-title">Insight to Action: Campaigns Created per Active User</div>
-        <div class="card-subtitle">Average campaigns created within 1 day of first R&A view, per WAU</div>
+        <div class="card-title">Insight to Action: Campaigns per User</div>
+        <div class="card-subtitle">Average campaigns created within <strong>7 days</strong> of first R&A view, per WAU</div>
       </div>
       <div class="kpi-row">
         <div class="kpi-value">${fmtRatio(cpu)}</div>
-        ${delta(cpu, priorCpu, true)}
-        ${totalCamp != null ? `<div class="kpi-context">${fmtCount(totalCamp)} campaigns / ${fmtCount(activeU)} WAU</div>` : ""}
+        ${deltaBoth(cpu, pwCpu, pyCpu, true)}
+        ${totalCamp != null ? `<div class="kpi-context">${fmtCount(totalCamp)} campaigns / ${fmtCount(latest(i2aData, "active_users"))} WAU</div>` : ""}
       </div>
-      <div class="chart-legend">
-        <div class="legend-item"><div class="leg-line current"></div> Current</div>
-        ${state.compare !== "none" ? `<div class="legend-item"><div class="leg-line prior"></div> ${getPriorSeriesLabel()}</div>` : ""}
-      </div>
+      ${legendHtml}
       <div class="chart-wrap"><canvas id="chart-cpu"></canvas></div>
       <div class="glossary">
         <button class="glossary-toggle" onclick="toggleGlossary(this)">▶ How this is calculated</button>
         <div class="glossary-body">
-          <strong>Formula:</strong> Total Campaigns Created ÷ WAU<br>
-          <strong>Note:</strong> A user creating 3 campaigns contributes 3 to numerator but 1 to denominator.<br>
-          <strong>Source:</strong> <code>rpt_RA_L1L3_Test_03_04</code> as <code>total_campaigns_created</code>
+          <strong>Formula:</strong> Total Campaigns ÷ WAU<br>
+          <strong>Window:</strong> 7 days from first R&A view.
         </div>
       </div>
     </div>
@@ -895,29 +896,33 @@ function renderOverviewCharts(data, adoptionMap) {
       <div class="glossary">
         <button class="glossary-toggle" onclick="toggleGlossary(this)">▶ How this is calculated</button>
         <div class="glossary-body">
-          <strong>Owned Pages:</strong> <code>reporting:viewed</code> on Marketing Dashboard, Audience Analytics, Conversion Insights, Custom Reports, Reports, SMS Report, Email Report, CJB Report, Analytics Agent.<br>
-          <strong>Supported CTAs:</strong> Homepage widgets, All Campaigns "View analytics"/"View report" buttons.<br>
-          <strong>De-duplication:</strong> Each user counted once even if appearing in both groups.
+          <strong>Owned Pages:</strong> Marketing Dashboard, Audience Analytics, Conversion Insights, Custom Reports, Reports, SMS Report, Email Report, CJB Report, Analytics Agent.<br>
+          <strong>Supported CTAs:</strong> Homepage widgets, All Campaigns buttons.<br>
+          <strong>De-duplication:</strong> Each user counted once.
         </div>
       </div>
     </div>
   `;
 
-  // Build all charts
-  const priorKey = state.compare === "wow" ? "pw_" : "py_";
+  // Build charts — 3 series: current + prior week (teal) + prior year (gray)
+  const i2aLabels = i2aData.map(d => fmtDate(d.period_start));
+
   buildChart("chart-rev", labels,
     data.map(d => d.pct_attributed_rev),
-    data.map(d => d[priorKey + "pct_attributed_rev"]),
+    data.map(d => d.pw_pct_attributed_rev),
+    data.map(d => d.py_pct_attributed_rev),
     fmtPct, { fill: true }
   );
-  buildChart("chart-camp-pct", labels,
-    data.map(d => d.pct_campaigns_created),
-    data.map(d => d[priorKey + "pct_campaigns_created"]),
+  buildChart("chart-camp-pct", i2aLabels,
+    i2aData.map(d => d.pct_campaigns_created),
+    i2aData.map(d => d.pw_pct_campaigns_created),
+    i2aData.map(d => d.py_pct_campaigns_created),
     fmtPct, { fill: true }
   );
-  buildChart("chart-cpu", labels,
-    data.map(d => d.campaigns_per_user),
-    data.map(d => d[priorKey + "campaigns_per_user"]),
+  buildChart("chart-cpu", i2aLabels,
+    i2aData.map(d => d.campaigns_per_user),
+    i2aData.map(d => d.pw_campaigns_per_user),
+    i2aData.map(d => d.py_campaigns_per_user),
     fmtRatio, { fill: true }
   );
   buildAdoptionChart("chart-ra-adoption", labels,
@@ -931,53 +936,67 @@ function renderOverviewCharts(data, adoptionMap) {
 // ═══════════════════════════════════════════════════════════════════════════════
 function renderI2ASection(data) {
   const el = document.getElementById("i2a-section");
-  const prefix = getComparePrefix();
   const labels = data.map(d => fmtDate(d.period_start));
+  const isWeekly = state.granularity === "weekly";
 
   const actionsPct = latest(data, "pct_actions_taken");
-  const priorActionsPct = latest(data, prefix + "pct_actions_taken");
+  const pwActionsPct = latest(data, "pw_pct_actions_taken");
+  const pyActionsPct = latest(data, "py_pct_actions_taken");
   const activeU = latest(data, "active_users");
 
   const rows = [
     {
       name: "Campaign Created", users: latest(data, "campaign_users"),
       rate: latest(data, "pct_campaigns_created"),
-      priorRate: latest(data, prefix + "pct_campaigns_created"),
+      pwRate: latest(data, "pw_pct_campaigns_created"),
+      pyRate: latest(data, "py_pct_campaigns_created"),
       count: latest(data, "total_campaigns"),
       chartId: "chart-i2a-camp",
       currentData: data.map(d => d.pct_campaigns_created),
-      priorData: data.map(d => d[prefix + "pct_campaigns_created"]),
+      pwData: data.map(d => d.pw_pct_campaigns_created),
+      pyData: data.map(d => d.py_pct_campaigns_created),
     },
     {
       name: "Automation Created", users: latest(data, "automation_users"),
       rate: latest(data, "pct_automations_created"),
-      priorRate: latest(data, prefix + "pct_automations_created"),
+      pwRate: latest(data, "pw_pct_automations_created"),
+      pyRate: latest(data, "py_pct_automations_created"),
       count: latest(data, "total_automations"),
       chartId: "chart-i2a-auto",
       currentData: data.map(d => d.pct_automations_created),
-      priorData: data.map(d => d[prefix + "pct_automations_created"]),
+      pwData: data.map(d => d.pw_pct_automations_created),
+      pyData: data.map(d => d.py_pct_automations_created),
     },
     {
       name: "Segment Created", users: latest(data, "segment_users"),
       rate: latest(data, "pct_segments_created"),
-      priorRate: latest(data, prefix + "pct_segments_created"),
+      pwRate: latest(data, "pw_pct_segments_created"),
+      pyRate: latest(data, "py_pct_segments_created"),
       count: latest(data, "total_segments"),
       chartId: "chart-i2a-seg",
       currentData: data.map(d => d.pct_segments_created),
-      priorData: data.map(d => d[prefix + "pct_segments_created"]),
+      pwData: data.map(d => d.pw_pct_segments_created),
+      pyData: data.map(d => d.py_pct_segments_created),
     },
   ];
 
+  const legendHtml = `
+    <div class="chart-legend">
+      <div class="legend-item"><div class="leg-line current"></div> Current</div>
+      ${isWeekly ? '<div class="legend-item"><div class="leg-line" style="background:#00b9a9;"></div> Prior Week</div>' : ''}
+      <div class="legend-item"><div class="leg-line prior"></div> Prior Year</div>
+    </div>`;
+
   el.innerHTML = `
-    <div class="section-title"><span class="ai-icon">✦</span> Insight to Action — Breakdown by Action Type</div>
+    <div class="section-title"><span class="ai-icon">✦</span> Insight to Action — 7-Day Window</div>
     <div class="metric-card">
       <div class="card-top">
         <div class="card-title">Overall: % of Users Who Took Any Action</div>
-        <div class="card-subtitle">Users who created a campaign, automation, or segment within 1 day of first R&A view</div>
+        <div class="card-subtitle">Users who created a campaign, automation, or segment within <strong>7 days</strong> of first R&A view</div>
       </div>
       <div class="kpi-row">
         <div class="kpi-value">${fmtPct(actionsPct)}</div>
-        ${delta(actionsPct, priorActionsPct)}
+        ${deltaBoth(actionsPct, pwActionsPct, pyActionsPct)}
         <div class="kpi-context">${fmtCount(latest(data, "actions_taken_users"))} users / ${fmtCount(activeU)} WAU</div>
       </div>
       <div style="padding: 16px 24px;">
@@ -987,7 +1006,8 @@ function renderI2ASection(data) {
               <th>Action Type</th>
               <th>Users</th>
               <th>% of WAU</th>
-              <th>Δ ${getCompareLabel()}</th>
+              <th>Δ WoW</th>
+              <th>Δ YoY</th>
               <th>Total Actions</th>
             </tr>
           </thead>
@@ -997,12 +1017,14 @@ function renderI2ASection(data) {
                 <td class="action-name">${r.name}</td>
                 <td>${fmtCount(r.users)}</td>
                 <td>${fmtPct(r.rate)}</td>
-                <td>${delta(r.rate, r.priorRate)}</td>
+                <td>${_oneDelta(r.rate, r.pwRate, "WoW")}</td>
+                <td>${_oneDelta(r.rate, r.pyRate, "YoY")}</td>
                 <td>${fmtCount(r.count)}</td>
               </tr>
             `).join("")}
             <tr>
               <td class="action-name coming-soon">A/B Test Created</td>
+              <td class="coming-soon">—</td>
               <td class="coming-soon">—</td>
               <td class="coming-soon">—</td>
               <td class="coming-soon">—</td>
@@ -1015,18 +1037,15 @@ function renderI2ASection(data) {
 
     ${rows.map(r => `
       <div class="metric-card">
-        <div class="card-top"><div class="card-title">${r.name} — Trend</div></div>
-        <div class="chart-legend">
-          <div class="legend-item"><div class="leg-line current"></div> Current</div>
-          ${state.compare !== "none" ? `<div class="legend-item"><div class="leg-line prior"></div> ${getPriorSeriesLabel()}</div>` : ""}
-        </div>
+        <div class="card-top"><div class="card-title">${r.name} — Trend (7-day window)</div></div>
+        ${legendHtml}
         <div class="chart-wrap"><canvas id="${r.chartId}"></canvas></div>
       </div>
     `).join("")}
   `;
 
   rows.forEach(r => {
-    buildChart(r.chartId, labels, r.currentData, r.priorData, fmtPct, { fill: true });
+    buildChart(r.chartId, labels, r.currentData, r.pwData, r.pyData, fmtPct, { fill: true });
   });
 }
 
@@ -1169,14 +1188,14 @@ async function loadData() {
     const qs = new URLSearchParams({
       ecu: state.ecu, hvc: state.hvc, granularity: state.granularity
     }).toString();
-    const compareQs = qs + `&compare=${state.compare}`;
 
-    // Fetch all APIs in parallel with 30s timeout (Fix 7)
-    const [metricsRes, adoptionRes, engagementRes, summaryRes] = await Promise.all([
+    // Fetch all 5 APIs in parallel with 30s timeout
+    const [metricsRes, adoptionRes, i2aRes, engagementRes, summaryRes] = await Promise.all([
       fetchWithTimeout("/api/metrics?" + qs),
       fetchWithTimeout("/api/adoption?" + qs),
+      fetchWithTimeout("/api/i2a?" + qs, 120000),  // I2A queries raw tables, may be slow
       fetchWithTimeout("/api/engagement?" + qs),
-      fetchWithTimeout("/api/executive-summary?" + compareQs),
+      fetchWithTimeout("/api/executive-summary?" + qs + "&compare=wow"),
     ]);
 
     if (!metricsRes.ok) {
@@ -1185,6 +1204,7 @@ async function loadData() {
     }
 
     const metricsData = await metricsRes.json();
+    const i2aData = i2aRes.ok ? await i2aRes.json() : [];
 
     // Adoption/engagement may return {data, meta} wrapper (Fix 4)
     const adoptionJson = adoptionRes.ok ? await adoptionRes.json() : {};
@@ -1206,11 +1226,11 @@ async function loadData() {
 
     // ── Render Page 1: Executive Overview ──
     renderExecSummary(summaryData);
-    renderKPIGrid(metricsData);
-    renderOverviewCharts(metricsData, adoptionMap);
+    renderKPIGrid(metricsData, i2aData);
+    renderOverviewCharts(metricsData, adoptionMap, i2aData);
 
     // ── Render Page 2: Detailed Analytics ──
-    renderI2ASection(metricsData);
+    renderI2ASection(i2aData);
     renderEngagementSection(engagementData);
     document.getElementById("adoption-section").innerHTML = "";
 

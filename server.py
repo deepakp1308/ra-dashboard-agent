@@ -484,6 +484,176 @@ def get_adoption():
     return _make_response(rows)
 
 
+I2A_WINDOW_DAYS = 7  # Attribution window: actions within 7 days of first R&A view
+
+
+@app.route("/api/i2a")
+def get_i2a():
+    """
+    Insight-to-Action with 7-day attribution window.
+    Queries raw tables directly (not the pre-aggregated Dataform table which uses 1-day).
+    Returns weekly data with current, prior-year, and prior-week rates.
+    """
+    ecu, hvc, granularity, errors = _get_filters()
+    if errors:
+        return jsonify({"error": errors}), 400
+
+    cache_key = f"i2a|{ecu}|{hvc}|{granularity}"
+    cached, cache_ts, hit = _cache_get(cache_key)
+    if hit:
+        return jsonify(cached)
+
+    period_expr_bu = _period_expr(granularity, "b.week")
+
+    query = f"""
+    WITH base_user AS (
+        SELECT w.user_id, w.week,
+               ecomm_level_end,
+               CAST(is_high_value AS STRING) AS is_high_value
+        FROM `mc-analytics-devel.bi_product.user_dimensions_weekly_rollup` w
+        WHERE w.week >= '2024-01-01'
+          AND w.week < DATE_TRUNC(CURRENT_DATE, WEEK)
+          AND w.wau
+          AND w.is_high_value IS NOT NULL
+          AND {_ecu_clause(ecu, 'w')}
+          AND {_hvc_clause(hvc, 'w', string_type=False)}
+        GROUP BY ALL
+    ),
+
+    ra_views AS (
+        SELECT user_id,
+               DATE_TRUNC(DATE(timestamp), WEEK) AS week,
+               MIN(DATE(timestamp)) AS first_viewed_date
+        FROM `mc-business-intelligence.bi_activities.ecs_users_activities`
+        WHERE DATE(timestamp) >= '2024-01-01'
+          AND (
+            (event = 'reporting:viewed' AND screen NOT IN ('/') AND (
+                (scope_area = 'analytics' AND object_detail IN ('marketing_dashboard','email_dashboard','audience_analytics','custom_reports','sms_report'))
+                OR (scope_area IN ('business_analytics','subscription_management') AND object_detail IN ('conversion_insights','revenue_plans'))
+                OR (initiative_name = 'marketing_crm_analytics' AND scope_area = 'campaign_analytics' AND object_detail LIKE 'email_%')
+                OR (initiative_name = 'core_offerings' AND object_detail IN ('cjb_original_report','cjb_overview_report','customer_journey_builder_report'))
+                OR screen IN ('/reports/','/reports','reports','/analytics/marketing-dashboard','/analytics/audience-analytics','/analytics/sms')
+                OR screen LIKE '%/reports/#f_list%'
+                OR screen LIKE '%analytics/conversion-insights%'
+                OR screen LIKE '%analytics/custom-reports%'
+            ))
+            OR screen IN ('/','/campaigns/','/campaigns','/customer-journey/','/audience/','/audience/contacts/','/audience/segments/','/sms/')
+          )
+        GROUP BY user_id, week
+    ),
+
+    campaigns AS (
+        SELECT a.user_id,
+               DATE_TRUNC(DATE(a.created_at), WEEK) AS week,
+               COUNT(DISTINCT CONCAT(a.user_id, a.campaign_id)) AS campaigns_created
+        FROM `mc-business-intelligence.bi_reporting.emails_bulk` a
+        INNER JOIN ra_views v
+            ON a.user_id = v.user_id
+            AND DATE_TRUNC(DATE(a.created_at), WEEK) = v.week
+            AND DATE(a.created_at) >= v.first_viewed_date
+            AND DATE_DIFF(DATE(a.created_at), v.first_viewed_date, DAY) <= {I2A_WINDOW_DAYS}
+        WHERE DATE(a.created_at) >= '2024-01-01'
+        GROUP BY ALL
+    ),
+
+    automations AS (
+        SELECT a.user_id,
+               DATE_TRUNC(DATE(a.created_at), WEEK) AS week,
+               COUNT(DISTINCT CONCAT(a.user_id, a.workflow_id)) AS automations_created
+        FROM `mc-business-intelligence.bi_reporting.customer_journey_workflows` a
+        INNER JOIN ra_views v
+            ON a.user_id = v.user_id
+            AND DATE_TRUNC(DATE(a.created_at), WEEK) = v.week
+            AND DATE(a.created_at) >= v.first_viewed_date
+            AND DATE_DIFF(DATE(a.created_at), v.first_viewed_date, DAY) <= {I2A_WINDOW_DAYS}
+        WHERE DATE(a.created_at) >= '2024-01-01'
+        GROUP BY ALL
+    ),
+
+    segments AS (
+        SELECT a.user_id,
+               DATE_TRUNC(a.action_date, WEEK) AS week,
+               SUM(CASE WHEN action_type LIKE '%segment created%' AND finished_action_count > 0
+                        THEN finished_action_count END) AS segments_created
+        FROM `mc-business-intelligence.bi_reporting.tags_segments_daily_rollup` a
+        INNER JOIN ra_views v
+            ON a.user_id = v.user_id
+            AND DATE_TRUNC(a.action_date, WEEK) = v.week
+            AND a.action_date >= v.first_viewed_date
+            AND DATE_DIFF(a.action_date, v.first_viewed_date, DAY) <= {I2A_WINDOW_DAYS}
+        WHERE a.action_date >= '2024-01-01'
+        GROUP BY ALL
+    ),
+
+    weekly AS (
+        SELECT
+            {period_expr_bu} AS period_start,
+            COUNT(DISTINCT b.user_id) AS active_users,
+            COUNT(DISTINCT CASE WHEN c.campaigns_created > 0 THEN b.user_id END) AS campaign_users,
+            COUNT(DISTINCT CASE WHEN a.automations_created > 0 THEN b.user_id END) AS automation_users,
+            COUNT(DISTINCT CASE WHEN s.segments_created > 0 THEN b.user_id END) AS segment_users,
+            COUNT(DISTINCT CASE WHEN c.campaigns_created > 0
+                                  OR a.automations_created > 0
+                                  OR s.segments_created > 0
+                               THEN b.user_id END) AS actions_taken_users,
+            SUM(COALESCE(c.campaigns_created, 0)) AS total_campaigns,
+            SUM(COALESCE(a.automations_created, 0)) AS total_automations,
+            SUM(COALESCE(s.segments_created, 0)) AS total_segments
+        FROM base_user b
+        LEFT JOIN campaigns c ON b.user_id = c.user_id AND b.week = c.week
+        LEFT JOIN automations a ON b.user_id = a.user_id AND b.week = a.week
+        LEFT JOIN segments s ON b.user_id = s.user_id AND b.week = s.week
+        GROUP BY 1
+    )
+
+    SELECT
+        period_start,
+        active_users,
+        campaign_users,
+        automation_users,
+        segment_users,
+        actions_taken_users,
+        total_campaigns,
+        total_automations,
+        total_segments,
+        ROUND(SAFE_DIVIDE(campaign_users, active_users) * 100, 2) AS pct_campaigns_created,
+        ROUND(SAFE_DIVIDE(automation_users, active_users) * 100, 2) AS pct_automations_created,
+        ROUND(SAFE_DIVIDE(segment_users, active_users) * 100, 2) AS pct_segments_created,
+        ROUND(SAFE_DIVIDE(actions_taken_users, active_users) * 100, 2) AS pct_actions_taken,
+        ROUND(SAFE_DIVIDE(total_campaigns, active_users), 3) AS campaigns_per_user,
+        ROUND(SAFE_DIVIDE(total_automations, active_users), 4) AS automations_per_user,
+        ROUND(SAFE_DIVIDE(total_segments, active_users), 4) AS segments_per_user,
+        -- Prior period values via LAG
+        LAG(ROUND(SAFE_DIVIDE(campaign_users, active_users) * 100, 2)) OVER (ORDER BY period_start) AS pw_pct_campaigns_created,
+        LAG(ROUND(SAFE_DIVIDE(automation_users, active_users) * 100, 2)) OVER (ORDER BY period_start) AS pw_pct_automations_created,
+        LAG(ROUND(SAFE_DIVIDE(segment_users, active_users) * 100, 2)) OVER (ORDER BY period_start) AS pw_pct_segments_created,
+        LAG(ROUND(SAFE_DIVIDE(actions_taken_users, active_users) * 100, 2)) OVER (ORDER BY period_start) AS pw_pct_actions_taken,
+        LAG(ROUND(SAFE_DIVIDE(total_campaigns, active_users), 3)) OVER (ORDER BY period_start) AS pw_campaigns_per_user
+    FROM weekly
+    WHERE period_start IS NOT NULL
+    ORDER BY period_start ASC
+    """
+
+    rows, err = _run_query(query, f"i2a(ecu={ecu},hvc={hvc},window={I2A_WINDOW_DAYS}d)")
+    if err:
+        return jsonify({"error": f"BigQuery error: {err}"}), 503
+
+    # Add YoY by matching period_number (week-of-year) across years
+    if rows and len(rows) > 52:
+        for i in range(52, len(rows)):
+            for key in ["pct_campaigns_created", "pct_automations_created",
+                        "pct_segments_created", "pct_actions_taken", "campaigns_per_user"]:
+                rows[i][f"py_{key}"] = rows[i - 52].get(key)
+    elif rows:
+        for r in rows:
+            for key in ["pct_campaigns_created", "pct_automations_created",
+                        "pct_segments_created", "pct_actions_taken", "campaigns_per_user"]:
+                r[f"py_{key}"] = None
+
+    _cache_set(cache_key, rows)
+    return jsonify(rows)
+
+
 @app.route("/api/engagement")
 def get_engagement():
     """Engagement breakdown by page — owned, supported, and combined."""
