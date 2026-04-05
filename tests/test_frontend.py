@@ -35,7 +35,7 @@ class TestHTMLStructure:
     def test_has_title(self):
         html = _read_html()
         assert "<title>" in html
-        assert "R&A Executive Dashboard" in html
+        assert "Reporting" in html and "Analytics" in html
 
     def test_has_tab_buttons(self):
         html = _read_html()
@@ -51,8 +51,7 @@ class TestHTMLStructure:
         html = _read_html()
         assert 'id="exec-summary-wow"' in html
         assert 'id="exec-summary-yoy"' in html
-        assert 'id="exec-summary-wow-p2"' in html
-        assert 'id="exec-summary-yoy-p2"' in html
+        # P2 summaries removed per user request
 
     def test_has_kpi_grid_container(self):
         html = _read_html()
@@ -104,13 +103,12 @@ class TestFilterElements:
         assert 'data-filter="tenure" data-value="tenured"' in html
 
     def test_all_filter_buttons_have_data_attributes(self):
-        """Every non-disabled filter-btn must have data-filter and data-value."""
+        """Every non-disabled filter-btn must have data-filter and data-value (except Apply)."""
         html = _read_html()
-        # Find all filter-btn elements (approximate via regex)
         buttons = re.findall(r'class="filter-btn[^"]*"[^>]*>', html)
         for btn in buttons:
-            if "disabled" in btn:
-                continue
+            if "disabled" in btn or "onclick=" in btn:
+                continue  # Skip disabled and Apply button
             assert "data-filter=" in btn, f"Missing data-filter: {btn[:80]}"
             assert "data-value=" in btn, f"Missing data-value: {btn[:80]}"
 

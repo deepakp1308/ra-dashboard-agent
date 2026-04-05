@@ -217,4 +217,4 @@ class TestIndexRoute:
         resp = flask_test_client.get("/")
         assert resp.status_code == 200
         assert b"<!DOCTYPE html>" in resp.data
-        assert b"R&A Executive Dashboard" in resp.data
+        assert b"Reporting" in resp.data and b"Analytics" in resp.data

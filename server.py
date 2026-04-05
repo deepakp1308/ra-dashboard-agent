@@ -140,12 +140,24 @@ def _period_expr(granularity, col="week"):
 def _get_filters():
     ecu = request.args.get("ecu", "all")
     hvc = request.args.get("hvc", "all")
-    granularity = request.args.get("granularity", "monthly")  # Monthly default
+    granularity = request.args.get("granularity", "monthly")
     tenure = request.args.get("tenure", "all")
+    date_start = request.args.get("date_start", "2024-01-01")
+    date_end = request.args.get("date_end", "")  # empty = current
     errors = _validate_filters(ecu, hvc, granularity, tenure)
     if errors:
-        return None, None, None, None, errors
-    return ecu, hvc, granularity, tenure, None
+        return None, None, None, None, None, None, errors
+    return ecu, hvc, granularity, tenure, date_start, date_end, None
+
+
+def _date_clause(date_start, date_end, col="week"):
+    """Generate date range WHERE clause."""
+    clause = f"{col} >= '{date_start}'"
+    if date_end:
+        clause += f" AND {col} < '{date_end}'"
+    else:
+        clause += f" AND {col} < DATE_TRUNC(CURRENT_DATE, WEEK)"
+    return clause
 
 
 def _metrics_in_clause(metric_list):
@@ -203,7 +215,7 @@ def get_metrics():
     Fix 5: category = 'L1' filter prevents double-counting across L1/L2/L3.
     Fix 6: pw_has_data / py_has_data flags for null-vs-zero distinction.
     """
-    ecu, hvc, granularity, tenure, errors = _get_filters()
+    ecu, hvc, granularity, tenure, date_start, date_end, errors = _get_filters()
     if errors:
         return jsonify({"error": errors}), 400
 
@@ -382,7 +394,7 @@ def get_adoption():
     """
     R&A Adoption — de-duplicated union from ECS (bypasses Dataform double-counting).
     """
-    ecu, hvc, granularity, tenure, errors = _get_filters()
+    ecu, hvc, granularity, tenure, date_start, date_end, errors = _get_filters()
     if errors:
         return jsonify({"error": errors}), 400
 
@@ -401,7 +413,7 @@ def get_adoption():
         SELECT w.user_id, w.week,
                DATE_DIFF(w.week, MIN(w.week) OVER (PARTITION BY w.user_id), DAY) AS tenure_days
         FROM `mc-analytics-devel.bi_product.user_dimensions_weekly_rollup` w
-        WHERE w.week >= '2024-01-01'
+        WHERE w.week >= '{date_start}'
           AND w.week < DATE_TRUNC(CURRENT_DATE, WEEK)
           AND w.wau
           AND w.is_high_value IS NOT NULL
@@ -415,7 +427,7 @@ def get_adoption():
     owned_pages AS (
         SELECT DISTINCT DATE_TRUNC(DATE(timestamp), WEEK) AS week, user_id
         FROM `mc-business-intelligence.bi_activities.ecs_users_activities`
-        WHERE DATE(timestamp) >= '2024-01-01'
+        WHERE DATE(timestamp) >= '{date_start}'
           AND event = 'reporting:viewed'
           AND screen NOT IN ('/')
           AND (
@@ -475,7 +487,7 @@ def get_adoption():
     supported_cta AS (
         SELECT DISTINCT DATE_TRUNC(DATE(timestamp), WEEK) AS week, user_id
         FROM `mc-business-intelligence.bi_activities.ecs_users_activities`
-        WHERE DATE(timestamp) >= '2024-01-01'
+        WHERE DATE(timestamp) >= '{date_start}'
           AND (
             (event = 'reporting:engaged' AND ui_object_detail = 'audience_analytics' AND screen = '/')
             OR (event = 'reporting:engaged' AND ui_object_detail = 'marketing_dashboard' AND screen = '/')
@@ -528,7 +540,7 @@ def get_i2a():
     Queries raw tables directly (not the pre-aggregated Dataform table which uses 1-day).
     Returns weekly data with current, prior-year, and prior-week rates.
     """
-    ecu, hvc, granularity, tenure, errors = _get_filters()
+    ecu, hvc, granularity, tenure, date_start, date_end, errors = _get_filters()
     if errors:
         return jsonify({"error": errors}), 400
 
@@ -547,7 +559,7 @@ def get_i2a():
                CAST(is_high_value AS STRING) AS is_high_value,
                DATE_DIFF(w.week, MIN(w.week) OVER (PARTITION BY w.user_id), DAY) AS tenure_days
         FROM `mc-analytics-devel.bi_product.user_dimensions_weekly_rollup` w
-        WHERE w.week >= '2024-01-01'
+        WHERE w.week >= '{date_start}'
           AND w.week < DATE_TRUNC(CURRENT_DATE, WEEK)
           AND w.wau
           AND w.is_high_value IS NOT NULL
@@ -565,7 +577,7 @@ def get_i2a():
                DATE_TRUNC(DATE(timestamp), WEEK) AS week,
                MIN(DATE(timestamp)) AS first_viewed_date
         FROM `mc-business-intelligence.bi_activities.ecs_users_activities`
-        WHERE DATE(timestamp) >= '2024-01-01'
+        WHERE DATE(timestamp) >= '{date_start}'
           AND (
             (event = 'reporting:viewed' AND screen NOT IN ('/') AND (
                 (scope_area = 'analytics' AND object_detail IN ('marketing_dashboard','email_dashboard','audience_analytics','custom_reports','sms_report'))
@@ -592,7 +604,7 @@ def get_i2a():
             AND DATE_TRUNC(DATE(a.created_at), WEEK) = v.week
             AND DATE(a.created_at) >= v.first_viewed_date
             AND DATE_DIFF(DATE(a.created_at), v.first_viewed_date, DAY) <= {I2A_WINDOW_DAYS}
-        WHERE DATE(a.created_at) >= '2024-01-01'
+        WHERE DATE(a.created_at) >= '{date_start}'
         GROUP BY ALL
     ),
 
@@ -606,7 +618,7 @@ def get_i2a():
             AND DATE_TRUNC(DATE(a.created_at), WEEK) = v.week
             AND DATE(a.created_at) >= v.first_viewed_date
             AND DATE_DIFF(DATE(a.created_at), v.first_viewed_date, DAY) <= {I2A_WINDOW_DAYS}
-        WHERE DATE(a.created_at) >= '2024-01-01'
+        WHERE DATE(a.created_at) >= '{date_start}'
         GROUP BY ALL
     ),
 
@@ -621,7 +633,7 @@ def get_i2a():
             AND DATE_TRUNC(a.action_date, WEEK) = v.week
             AND a.action_date >= v.first_viewed_date
             AND DATE_DIFF(a.action_date, v.first_viewed_date, DAY) <= {I2A_WINDOW_DAYS}
-        WHERE a.action_date >= '2024-01-01'
+        WHERE a.action_date >= '{date_start}'
         GROUP BY ALL
     ),
 
@@ -697,7 +709,7 @@ def get_i2a():
 @app.route("/api/engagement")
 def get_engagement():
     """Engagement breakdown by page — owned, supported, and combined."""
-    ecu, hvc, granularity, tenure, errors = _get_filters()
+    ecu, hvc, granularity, tenure, date_start, date_end, errors = _get_filters()
     if errors:
         return jsonify({"error": errors}), 400
 
@@ -788,7 +800,7 @@ def get_page_funnel():
     Per-page funnel: Views → Engaged → I2A (7-day) for each R&A page.
     Views + Engaged from report table (fast). Per-page I2A from raw ECS (slow, cached).
     """
-    ecu, hvc, granularity, tenure, errors = _get_filters()
+    ecu, hvc, granularity, tenure, date_start, date_end, errors = _get_filters()
     if errors:
         return jsonify({"error": errors}), 400
 
@@ -848,7 +860,7 @@ def get_page_funnel():
                '{p["label"]}' AS page_name,
                MIN(DATE(timestamp)) AS first_view
         FROM `mc-business-intelligence.bi_activities.ecs_users_activities`
-        WHERE DATE(timestamp) >= '2024-01-01' AND ({p["ecs_filter"]})
+        WHERE DATE(timestamp) >= '{date_start}' AND ({p["ecs_filter"]})
         GROUP BY user_id, week, page_name""")
 
     if not page_view_unions:
@@ -862,7 +874,7 @@ def get_page_funnel():
         SELECT w.user_id, w.week,
                DATE_DIFF(w.week, MIN(w.week) OVER (PARTITION BY w.user_id), DAY) AS tenure_days
         FROM `mc-analytics-devel.bi_product.user_dimensions_weekly_rollup` w
-        WHERE w.week >= '2024-01-01'
+        WHERE w.week >= '{date_start}'
           AND w.week < DATE_TRUNC(CURRENT_DATE, WEEK)
           AND w.wau AND w.is_high_value IS NOT NULL
           AND {_ecu_clause(ecu, 'w')}
@@ -879,7 +891,7 @@ def get_page_funnel():
         SELECT user_id, DATE(created_at) AS created_at,
                COUNT(DISTINCT CONCAT(user_id, campaign_id)) AS cnt
         FROM `mc-business-intelligence.bi_reporting.emails_bulk`
-        WHERE DATE(created_at) >= '2024-01-01'
+        WHERE DATE(created_at) >= '{date_start}'
         GROUP BY 1, 2
     ),
     per_page_i2a AS (
@@ -966,7 +978,7 @@ def get_page_funnel():
 @app.route("/api/executive-summary")
 def get_executive_summary():
     """Executive summary — analytics engine produces 6-8 prioritized insight bullets."""
-    ecu, hvc, granularity, tenure, errors = _get_filters()
+    ecu, hvc, granularity, tenure, date_start, date_end, errors = _get_filters()
     if errors:
         return jsonify({"error": errors}), 400
 

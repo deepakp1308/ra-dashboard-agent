@@ -214,12 +214,20 @@ PAGE_FUNNEL_CONFIG = [
         ) AND screen NOT IN ('/') AND event = 'reporting:viewed'""",
     },
     {
-        "label": "Conversion Dashboard (incl. Predictive Analytics)",
+        "label": "Conversion Dashboard",
         "viewer_metric": "Conversion_Insights_viewers",
         "engaged_metric": "Conversion_Insights_Engaged",
         "ecs_filter": """(
-            (scope_area IN ('business_analytics','subscription_management') AND object_detail IN ('conversion_insights','revenue_plans'))
+            (scope_area = 'business_analytics' AND object_detail = 'conversion_insights')
             OR screen LIKE '%analytics/conversion-insights%'
+        ) AND screen NOT IN ('/') AND event = 'reporting:viewed'""",
+    },
+    {
+        "label": "Predictive Analytics",
+        "viewer_metric": "Conversion_Insights_viewers",
+        "engaged_metric": "Conversion_Insights_Engaged",
+        "ecs_filter": """(
+            scope_area = 'subscription_management' AND object_detail = 'revenue_plans'
         ) AND screen NOT IN ('/') AND event = 'reporting:viewed'""",
     },
     {

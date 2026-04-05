@@ -25,10 +25,12 @@ def check_html_structure():
     required = [
         ("page-overview", "Overview page container"),
         ("page-details", "Details page container"),
-        ("exec-summary-container", "Executive summary"),
+        ("exec-summary-wow", "Executive summary WoW"),
+        ("exec-summary-yoy", "Executive summary YoY"),
         ("kpi-grid-container", "KPI grid"),
         ("i2a-section", "Insight-to-action section"),
         ("engagement-section", "Engagement section"),
+        ("page-funnel-container", "Page funnels"),
     ]
     missing = [(id_, desc) for id_, desc in required if f'id="{id_}"' not in html]
     if missing:
@@ -123,14 +125,14 @@ def check_error_handling():
 
 
 def check_design_system():
-    """Verify Intuit/QBO FY27 design system tokens are used."""
+    """Verify black/grey design system tokens are used."""
     html = _read_html()
     tokens = {
-        "sidebar_navy": "#162251",
-        "page_bg": "#f0f4f8",
-        "accent_blue": "#0070d2",
-        "ai_teal": "#00b9a9",
-        "chart_navy": "#1e3a6e",
+        "sidebar_black": "#111111",
+        "page_bg": "#f5f5f5",
+        "accent_dark": "#222222",
+        "grey_mid": "#666666",
+        "chart_black": "#111111",
         "avenir_font": "Avenir Next",
         "ai_icon": "ai-icon",
     }

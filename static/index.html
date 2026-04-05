@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>R&A Executive Dashboard</title>
+<title>Reporting & Analytics Dashboard</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
 /* ── Intuit / QBO FY27 Design System ─────────────────────────────────────── */
@@ -364,7 +364,7 @@ body { background: var(--bg); font-family: var(--font); color: var(--text); min-
 <div class="header">
   <div class="header-left">
     <div>
-      <h1>R&A Executive Dashboard</h1>
+      <h1>Reporting & Analytics Dashboard</h1>
       <p>Reporting &amp; Analytics — Decision Intelligence</p>
     </div>
   </div>
@@ -405,6 +405,24 @@ body { background: var(--bg); font-family: var(--font); color: var(--text); min-
     <button class="filter-btn" data-filter="tenure" data-value="new">New</button>
     <button class="filter-btn" data-filter="tenure" data-value="tenured">Tenured</button>
   </div>
+  <div class="filter-group">
+    <label>Date Range</label>
+    <button class="filter-btn active" data-filter="dateRange" data-value="all">All</button>
+    <button class="filter-btn" data-filter="dateRange" data-value="7">1W</button>
+    <button class="filter-btn" data-filter="dateRange" data-value="30">30D</button>
+    <button class="filter-btn" data-filter="dateRange" data-value="60">60D</button>
+    <button class="filter-btn" data-filter="dateRange" data-value="90">90D</button>
+    <button class="filter-btn" data-filter="dateRange" data-value="180">180D</button>
+    <button class="filter-btn" data-filter="dateRange" data-value="365">1Y</button>
+    <button class="filter-btn" data-filter="dateRange" data-value="custom" id="custom-date-btn">Custom</button>
+  </div>
+  <div class="filter-group" id="custom-date-group" style="display:none;">
+    <label>From</label>
+    <input type="date" id="date-start-input" value="2024-01-01" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;font-family:var(--font);">
+    <label>To</label>
+    <input type="date" id="date-end-input" value="" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;font-family:var(--font);">
+    <button class="filter-btn" onclick="applyCustomDate()" style="background:var(--accent);color:#fff;border-color:var(--accent);">Apply</button>
+  </div>
 </div>
 
 <div class="main">
@@ -420,10 +438,6 @@ body { background: var(--bg); font-family: var(--font); color: var(--text); min-
 
   <!-- ── PAGE 2: Detailed Analytics ──────────────────────────────────────── -->
   <div id="page-details" class="page">
-    <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:20px;">
-      <div id="exec-summary-wow-p2"></div>
-      <div id="exec-summary-yoy-p2"></div>
-    </div>
     <div id="i2a-section"></div>
     <div id="engagement-section"></div>
     <div id="adoption-section"></div>
@@ -439,7 +453,7 @@ body { background: var(--bg); font-family: var(--font); color: var(--text); min-
 // ═══════════════════════════════════════════════════════════════════════════════
 //  STATE & CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════════
-const state = { ecu: "all", hvc: "all", granularity: "monthly", tenure: "all" };
+const state = { ecu: "all", hvc: "all", granularity: "monthly", tenure: "all", dateRange: "all", date_start: "2024-01-01", date_end: "" };
 const chartInstances = {};
 let currentTab = "overview";
 let engagementTab = "all";
@@ -468,9 +482,39 @@ document.querySelectorAll(".filter-btn:not(.disabled)").forEach(btn => {
     document.querySelectorAll(`.filter-btn[data-filter="${filter}"]`)
       .forEach(b => b.classList.remove("active"));
     btn.classList.add("active");
+
+    // Date range logic
+    if (filter === "dateRange") {
+      const customGroup = document.getElementById("custom-date-group");
+      if (value === "custom") {
+        customGroup.style.display = "flex";
+        return; // Don't reload until Apply is clicked
+      } else {
+        customGroup.style.display = "none";
+        if (value === "all") {
+          state.date_start = "2024-01-01";
+          state.date_end = "";
+        } else {
+          const days = parseInt(value);
+          const end = new Date();
+          const start = new Date();
+          start.setDate(end.getDate() - days);
+          state.date_start = start.toISOString().slice(0, 10);
+          state.date_end = "";
+        }
+      }
+    }
     loadData();
   });
 });
+
+function applyCustomDate() {
+  const ds = document.getElementById("date-start-input").value;
+  const de = document.getElementById("date-end-input").value;
+  if (ds) state.date_start = ds;
+  if (de) state.date_end = de;
+  loadData();
+}
 
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -774,9 +818,21 @@ function renderKPIGrid(data, i2aData) {
         <div class="kpi-mini-delta">${deltaBoth(actionsPct, pwActionsPct, pyActionsPct)}</div>
       </div>
       <div class="kpi-mini">
-        <div class="kpi-mini-label">R&A Adoption</div>
+        <div class="kpi-mini-label">Reporting & Analytics Adoption</div>
         <div class="kpi-mini-value">${fmtPct(raTotal)}</div>
         <div class="kpi-mini-delta">${deltaBoth(raTotal, pwRaTotal, pyRaTotal)}</div>
+      </div>
+    </div>
+    <div class="metric-card" style="margin-top:-8px;padding:0;">
+      <div class="glossary">
+        <button class="glossary-toggle" onclick="toggleGlossary(this)">▶ KPI Definitions & Sources</button>
+        <div class="glossary-body">
+          <strong>% Attributed Revenue:</strong> MC Attributed Revenue ÷ Total GMV × 100. Source: <code>ecommerce_orders_daily_rollups_tmp</code>. ECU users only.<br>
+          <strong>% Created Campaign (7d):</strong> Users who created a campaign within 7 days of first Reporting & Analytics view ÷ WAU × 100. Source: <code>emails_bulk</code> joined to <code>ecs_users_activities</code>.<br>
+          <strong>% Any Action I2A (7d):</strong> Users who created a campaign, automation, or segment within 7 days ÷ WAU × 100. Source: <code>emails_bulk</code>, <code>customer_journey_workflows</code>, <code>tags_segments_daily_rollup</code>.<br>
+          <strong>Reporting & Analytics Adoption:</strong> De-duplicated union of users who viewed owned pages OR clicked supported CTAs ÷ WAU × 100. Source: <code>ecs_users_activities</code> + <code>user_dimensions_weekly_rollup</code>.<br>
+          <strong>Δ WoW:</strong> Change vs prior week (percentage points). <strong>Δ YoY:</strong> Change vs same period prior year.
+        </div>
       </div>
     </div>
   `;
@@ -850,7 +906,7 @@ function renderOverviewCharts(data, adoptionMap, i2aData) {
     <div class="metric-card">
       <div class="card-top">
         <div class="card-title">Insight to Action: % Created Campaign</div>
-        <div class="card-subtitle">Users who created a campaign within <strong>7 days</strong> of first viewing any R&A product that week</div>
+        <div class="card-subtitle">Users who created a campaign within <strong>7 days</strong> of first viewing any Reporting & Analytics product that week</div>
       </div>
       <div class="kpi-row">
         <div class="kpi-value">${fmtPct(campPct)}</div>
@@ -863,8 +919,8 @@ function renderOverviewCharts(data, adoptionMap, i2aData) {
         <button class="glossary-toggle" onclick="toggleGlossary(this)">▶ How this is calculated</button>
         <div class="glossary-body">
           <strong>Formula:</strong> Campaign Created Users ÷ WAU × 100<br>
-          <strong>Window:</strong> 7 days from user's first R&A view that week.<br>
-          <strong>Source:</strong> Direct query on <code>emails_bulk</code> joined to R&A views from <code>ecs_users_activities</code>
+          <strong>Window:</strong> 7 days from user's first Reporting & Analytics view that week.<br>
+          <strong>Source:</strong> Direct query on <code>emails_bulk</code> joined to Reporting & Analytics views from <code>ecs_users_activities</code>
         </div>
       </div>
     </div>
@@ -873,7 +929,7 @@ function renderOverviewCharts(data, adoptionMap, i2aData) {
     <div class="metric-card">
       <div class="card-top">
         <div class="card-title">Insight to Action: Campaigns per User</div>
-        <div class="card-subtitle">Average campaigns created within <strong>7 days</strong> of first R&A view, per WAU</div>
+        <div class="card-subtitle">Average campaigns created within <strong>7 days</strong> of first Reporting & Analytics view, per WAU</div>
       </div>
       <div class="kpi-row">
         <div class="kpi-value">${fmtRatio(cpu)}</div>
@@ -886,16 +942,16 @@ function renderOverviewCharts(data, adoptionMap, i2aData) {
         <button class="glossary-toggle" onclick="toggleGlossary(this)">▶ How this is calculated</button>
         <div class="glossary-body">
           <strong>Formula:</strong> Total Campaigns ÷ WAU<br>
-          <strong>Window:</strong> 7 days from first R&A view.
+          <strong>Window:</strong> 7 days from first Reporting & Analytics view.
         </div>
       </div>
     </div>
 
-    <!-- R&A Adoption -->
+    <!-- Reporting & Analytics Adoption -->
     <div class="metric-card">
       <div class="card-top">
-        <div class="card-title">R&A Adoption</div>
-        <div class="card-subtitle">Share of active users who reached R&A — owned pages vs. owned + supported CTAs</div>
+        <div class="card-title">Reporting & Analytics Adoption</div>
+        <div class="card-subtitle">Share of active users who reached Reporting & Analytics — owned pages vs. owned + supported CTAs</div>
       </div>
       <div class="kpi-row">
         <div class="kpi-value">${fmtPct(raTotalPct)}</div>
@@ -1006,7 +1062,7 @@ function renderI2ASection(data) {
     <div class="metric-card">
       <div class="card-top">
         <div class="card-title">Overall: % of Users Who Took Any Action</div>
-        <div class="card-subtitle">Users who created a campaign, automation, or segment within <strong>7 days</strong> of first R&A view</div>
+        <div class="card-subtitle">Users who created a campaign, automation, or segment within <strong>7 days</strong> of first Reporting & Analytics view</div>
       </div>
       <div class="kpi-row">
         <div class="kpi-value">${fmtPct(actionsPct)}</div>
@@ -1047,6 +1103,16 @@ function renderI2ASection(data) {
           </tbody>
         </table>
       </div>
+      <div class="glossary">
+        <button class="glossary-toggle" onclick="toggleGlossary(this)">▶ Data Sources & Formulas</button>
+        <div class="glossary-body">
+          <strong>Attribution Window:</strong> 7 days from user's first Reporting & Analytics page view that week.<br>
+          <strong>Campaign Created:</strong> Users ÷ WAU × 100. Source: <code>emails_bulk</code> joined to ECS views. Deduplicated on <code>CONCAT(user_id, campaign_id)</code>.<br>
+          <strong>Automation Created:</strong> Users ÷ WAU × 100. Source: <code>customer_journey_workflows</code>. Deduplicated on <code>CONCAT(user_id, workflow_id)</code>.<br>
+          <strong>Segment Created:</strong> Users ÷ WAU × 100. Source: <code>tags_segments_daily_rollup</code> where <code>action_type LIKE '%segment created%'</code>.<br>
+          <strong>Δ WoW:</strong> Change vs prior week (LAG over week). <strong>Δ YoY:</strong> Change vs same period prior year (LAG over fiscal year).
+        </div>
+      </div>
     </div>
 
     ${rows.map(r => `
@@ -1081,15 +1147,19 @@ function renderEngagementSection(engData) {
     const entries = Object.entries(pageData).sort((a, b) => (b[1].users || 0) - (a[1].users || 0));
     return `
       <table class="eng-table">
-        <thead><tr><th>Page</th><th>Users</th><th>% of WAU</th></tr></thead>
+        <thead><tr><th>Page</th><th>Users</th><th>% of WAU</th><th>Δ WoW</th><th>Δ YoY</th></tr></thead>
         <tbody>
-          ${entries.map(([name, d]) => `
-            <tr>
+          ${entries.map(([name, d]) => {
+            const pwPct = d.denominator > 0 && d.pw_users ? (d.pw_users / d.denominator * 100) : null;
+            const pyPct = d.denominator > 0 && d.py_users ? (d.py_users / d.denominator * 100) : null;
+            return `<tr>
               <td style="font-weight:500;">${name}</td>
               <td>${fmtCount(d.users)}</td>
               <td>${fmtPct(d.rate)}</td>
-            </tr>
-          `).join("")}
+              <td>${_oneDelta(d.rate, pwPct, "WoW")}</td>
+              <td>${_oneDelta(d.rate, pyPct, "YoY")}</td>
+            </tr>`;
+          }).join("")}
         </tbody>
       </table>
     `;
@@ -1104,12 +1174,12 @@ function renderEngagementSection(engData) {
     <div class="section-title">Engagement Breakdown</div>
     <div class="metric-card">
       <div class="card-top">
-        <div class="card-title">R&A Engagement Overview</div>
+        <div class="card-title">Reporting & Analytics Engagement Overview</div>
         <div class="card-subtitle">User reach across owned and supported assets</div>
       </div>
       <div class="kpi-row">
         <div class="kpi-value">${fmtPct(allViewedEntry.rate)}</div>
-        <span class="kpi-delta flat">Viewed Any R&A Page</span>
+        <span class="kpi-delta flat">Viewed Any Reporting & Analytics Page</span>
         <div class="kpi-context">${fmtCount(allViewedEntry.users)} users / ${fmtCount(allViewedEntry.denominator)} WAU</div>
       </div>
       <div style="padding: 16px 24px 0;">
@@ -1123,6 +1193,18 @@ function renderEngagementSection(engData) {
       </div>
       <div id="eng-table-container" style="padding: 0 24px 16px;">
         ${makeTable({...latestEng.owned, ...latestEng.supported}, "All")}
+      </div>
+      <div class="glossary">
+        <button class="glossary-toggle" onclick="toggleGlossary(this)">▶ Data Sources & Formulas</button>
+        <div class="glossary-body">
+          <strong>Source:</strong> <code>rpt_RA_L1L3_Test_03_04</code> (L2/L3 per-page metrics from Dataform pipeline).<br>
+          <strong>Users:</strong> Distinct users who fired the page-specific ECS event that week/month.<br>
+          <strong>% of WAU:</strong> Page users ÷ Weekly Active Users × 100.<br>
+          <strong>Owned Assets:</strong> Marketing Dashboard, Audience Analytics, Conversion Insights, Custom Reports, Reports, SMS Report, Email Report, Journey Report, Replicated.<br>
+          <strong>Supported Pages:</strong> Homepage, All Campaigns, All Journeys, Automation Overview, All Contacts, Audience Dashboard, Audience Segments, SMS Overview.<br>
+          <strong>Engaged:</strong> Users with non-view interaction events (<code>event NOT LIKE '%viewed%'</code>).<br>
+          <strong>Δ WoW:</strong> Change vs prior week. <strong>Δ YoY:</strong> Change vs same period prior year. Both from LAG() in report table.
+        </div>
       </div>
     </div>
   `;
@@ -1262,6 +1344,90 @@ function renderPageFunnels(funnelData) {
         </div>
       </div>
     `).join("")}
+
+    <!-- Auto-generated Insights & Recommendations -->
+    ${generateFunnelInsights(pages)}
+  `;
+}
+
+function generateFunnelInsights(pages) {
+  const active = pages.filter(p => p.has_data && p.viewers > 0);
+  if (!active.length) return "";
+
+  const insights = [];
+  const recs = [];
+
+  // Top I2A converter
+  const byI2A = [...active].sort((a, b) => (b.view_to_i2a || 0) - (a.view_to_i2a || 0));
+  if (byI2A[0]?.view_to_i2a > 0) {
+    insights.push(`<strong>${byI2A[0].label}</strong> has the highest View→I2A conversion at <strong>${byI2A[0].view_to_i2a.toFixed(1)}%</strong> — users who view this page are most likely to take action.`);
+  }
+
+  // Lowest I2A converter (with meaningful views)
+  const byI2ALow = active.filter(p => p.viewers > 1000).sort((a, b) => (a.view_to_i2a || 999) - (b.view_to_i2a || 999));
+  if (byI2ALow[0] && byI2ALow[0].view_to_i2a < byI2A[0]?.view_to_i2a) {
+    insights.push(`<strong>${byI2ALow[0].label}</strong> has the lowest View→I2A at <strong>${(byI2ALow[0].view_to_i2a || 0).toFixed(1)}%</strong> despite ${fmtCount(byI2ALow[0].viewers)} views — opportunity to improve conversion.`);
+  }
+
+  // Highest engagement rate
+  const byEngage = [...active].filter(p => p.engaged > 0).sort((a, b) => (b.view_to_engage || 0) - (a.view_to_engage || 0));
+  if (byEngage[0]) {
+    insights.push(`<strong>${byEngage[0].label}</strong> leads in engagement with <strong>${byEngage[0].view_to_engage.toFixed(1)}%</strong> View→Engage — users actively interact beyond viewing.`);
+  }
+
+  // Most viewed page
+  const byViews = [...active].sort((a, b) => b.viewers - a.viewers);
+  insights.push(`<strong>${byViews[0].label}</strong> is the most viewed page with <strong>${fmtCount(byViews[0].viewers)}</strong> users.`);
+
+  // YoY growth/decline
+  const yoyGrowth = active.filter(p => p.viewers_py > 0).map(p => ({
+    ...p, yoy_pct: ((p.viewers - p.viewers_py) / p.viewers_py * 100)
+  })).sort((a, b) => b.yoy_pct - a.yoy_pct);
+  if (yoyGrowth.length && yoyGrowth[0].yoy_pct > 5) {
+    insights.push(`<strong>${yoyGrowth[0].label}</strong> grew <strong>+${yoyGrowth[0].yoy_pct.toFixed(0)}% YoY</strong> in views — strongest year-over-year growth.`);
+  }
+  if (yoyGrowth.length > 1) {
+    const worst = yoyGrowth[yoyGrowth.length - 1];
+    if (worst.yoy_pct < -5) {
+      insights.push(`<strong>${worst.label}</strong> declined <strong>${worst.yoy_pct.toFixed(0)}% YoY</strong> in views — investigate root cause.`);
+    }
+  }
+
+  // Recommendations
+  if (byI2ALow[0] && byI2ALow[0].view_to_i2a < 20) {
+    recs.push(`Add in-page prompts or CTAs on <strong>${byI2ALow[0].label}</strong> to drive campaign creation after viewing.`);
+  }
+  if (byEngage[0] && byI2A[0] && byEngage[0].label !== byI2A[0].label) {
+    recs.push(`Investigate why <strong>${byEngage[0].label}</strong> has high engagement but isn't the top I2A converter — the engagement may not lead to action.`);
+  }
+  if (yoyGrowth.length) {
+    const declining = yoyGrowth.filter(p => p.yoy_pct < -10);
+    if (declining.length) {
+      recs.push(`Prioritize revitalizing <strong>${declining.map(p => p.label).join(", ")}</strong> — declining >10% YoY.`);
+    }
+  }
+  recs.push(`Run A/B tests on page layouts for the lowest-converting pages to improve View→I2A rates.`);
+
+  return `
+    <div class="metric-card" style="margin-top:16px;">
+      <div class="card-top">
+        <div class="card-title" style="display:flex;align-items:center;gap:8px;">
+          <span class="ai-icon">✦</span> Key Insights & Recommendations
+        </div>
+      </div>
+      <div style="padding:12px 24px 8px;">
+        <div style="font-size:12px;font-weight:600;text-transform:uppercase;color:var(--muted);letter-spacing:.4px;margin-bottom:8px;">Insights</div>
+        <ul style="list-style:none;padding:0;">
+          ${insights.map(i => `<li style="padding:5px 0;font-size:13px;line-height:1.5;border-bottom:1px solid #f1f5f9;">● ${i}</li>`).join("")}
+        </ul>
+      </div>
+      <div style="padding:4px 24px 16px;">
+        <div style="font-size:12px;font-weight:600;text-transform:uppercase;color:var(--muted);letter-spacing:.4px;margin-bottom:8px;">Recommendations</div>
+        <ul style="list-style:none;padding:0;">
+          ${recs.map(r => `<li style="padding:5px 0;font-size:13px;line-height:1.5;border-bottom:1px solid #f1f5f9;">→ ${r}</li>`).join("")}
+        </ul>
+      </div>
+    </div>
   `;
 }
 
@@ -1308,7 +1474,7 @@ async function loadData() {
   Object.keys(chartInstances).forEach(k => delete chartInstances[k]);
 
   // Show loading on all containers
-  ["exec-summary-wow", "exec-summary-yoy", "exec-summary-wow-p2", "exec-summary-yoy-p2",
+  ["exec-summary-wow", "exec-summary-yoy",
    "kpi-grid-container", "overview-charts", "i2a-section", "engagement-section", "adoption-section", "page-funnel-container"]
     .forEach(id => {
       const el = document.getElementById(id);
@@ -1316,9 +1482,9 @@ async function loadData() {
     });
 
   try {
-    const qs = new URLSearchParams({
-      ecu: state.ecu, hvc: state.hvc, granularity: state.granularity, tenure: state.tenure
-    }).toString();
+    const params = { ecu: state.ecu, hvc: state.hvc, granularity: state.granularity, tenure: state.tenure, date_start: state.date_start };
+    if (state.date_end) params.date_end = state.date_end;
+    const qs = new URLSearchParams(params).toString();
 
     // Fetch all 6 APIs in parallel — TWO executive summaries (WoW + YoY)
     const [metricsRes, adoptionRes, i2aRes, engagementRes, summaryWoWRes, summaryYoYRes, funnelRes] = await Promise.all([
@@ -1361,9 +1527,6 @@ async function loadData() {
     // ── Render dual summaries on BOTH pages ──
     renderExecSummary(summaryWoW, "exec-summary-wow", "Week-over-Week");
     renderExecSummary(summaryYoY, "exec-summary-yoy", "Year-over-Year");
-    renderExecSummary(summaryWoW, "exec-summary-wow-p2", "Week-over-Week");
-    renderExecSummary(summaryYoY, "exec-summary-yoy-p2", "Year-over-Year");
-
     // ── Render Page 1: KPIs + Charts ──
     renderKPIGrid(metricsData, i2aData);
     renderOverviewCharts(metricsData, adoptionMap, i2aData);
