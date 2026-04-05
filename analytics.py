@@ -376,125 +376,127 @@ def generate_executive_summary(
 ):
     """
     Generate a concise executive summary with 6-8 bullet points.
-
-    Args:
-        trends: dict from compute_trends()
-        anomalies: list from detect_anomalies()
-        segments: list from analyze_segments()
-        funnel: list from compute_funnel()
-        correlations: list from compute_correlations()
-        comparison_mode: "wow" or "yoy"
-
-    Returns:
-        list of {"category", "severity", "text", "metric", "score"}
+    ALL insights are derived from the comparison-mode-specific delta so that
+    WoW and YoY summaries produce fundamentally different outputs.
     """
     bullets = []
     delta_label = "WoW" if comparison_mode == "wow" else "YoY"
     delta_key = "wow_delta" if comparison_mode == "wow" else "yoy_delta"
 
-    # ── Trends ────────────────────────────────────────────────────────────
+    # ── Collect mode-specific deltas for all metrics ─────────────────────
+    metric_deltas = []
     for key, t in trends.items():
         display = METRIC_DISPLAY.get(key, {})
         label = display.get("label", key)
         higher_better = display.get("higher_is_better", True)
         delta_val = t.get(delta_key)
-
         if delta_val is None:
             continue
+        is_good = (delta_val > 0) == higher_better
+        metric_deltas.append({
+            "key": key, "label": label, "delta": delta_val,
+            "current": t.get("current"), "previous": t.get("previous"),
+            "higher_better": higher_better, "is_good": is_good,
+            "streak": t.get("streak", 0), "growth": t.get("growth_rate_4w"),
+        })
 
-        if t["streak"] >= TREND_MIN_PERIODS:
-            direction_word = "improving" if (delta_val > 0) == higher_better else "declining"
-            severity = "positive" if direction_word == "improving" else "negative"
-            score = abs(delta_val) * t["streak"]
+    # Sort by absolute delta magnitude (biggest movers first)
+    metric_deltas.sort(key=lambda m: abs(m["delta"]), reverse=True)
+
+    # ── OPPORTUNITIES: top improving metrics for this comparison mode ────
+    improving = [m for m in metric_deltas if m["is_good"] and abs(m["delta"]) > 0.5]
+    for m in improving[:2]:
+        sign = "+" if m["delta"] > 0 else ""
+        bullets.append({
+            "category": "opportunity",
+            "severity": "positive",
+            "text": f"{m['label']} {delta_label} is up {sign}{m['delta']:.1f}% "
+                    f"(now {m['current']:.1f}{'%' if m['current'] < 100 else ''}) — "
+                    f"positive momentum to capitalize on",
+            "metric": m["key"],
+            "score": abs(m["delta"]) * 3,
+        })
+
+    # ── THREATS: top declining metrics for this comparison mode ───────────
+    declining = [m for m in metric_deltas if not m["is_good"] and abs(m["delta"]) > 0.5]
+    for m in declining[:2]:
+        sign = "+" if m["delta"] > 0 else ""
+        bullets.append({
+            "category": "threat",
+            "severity": "negative",
+            "text": f"{m['label']} {delta_label} is down {sign}{m['delta']:.1f}% "
+                    f"(now {m['current']:.1f}{'%' if m['current'] < 100 else ''}) — "
+                    f"requires attention",
+            "metric": m["key"],
+            "score": abs(m["delta"]) * 3,
+        })
+
+    # ── TRENDS: sustained multi-week direction (mode-specific) ───────────
+    for m in metric_deltas:
+        if m["streak"] >= TREND_MIN_PERIODS and abs(m["delta"]) > 0.1:
+            direction_word = "improving" if m["is_good"] else "declining"
+            severity = "positive" if m["is_good"] else "negative"
             bullets.append({
                 "category": "trend",
                 "severity": severity,
-                "text": f"{label} has been {direction_word} for {t['streak']} consecutive weeks "
-                        f"({'+' if delta_val > 0 else ''}{delta_val:.1f}% {delta_label})",
-                "metric": key,
-                "score": score,
+                "text": f"{m['label']} has been {direction_word} for {m['streak']} "
+                        f"consecutive periods ({'+' if m['delta'] > 0 else ''}{m['delta']:.1f}% {delta_label})",
+                "metric": m["key"],
+                "score": abs(m["delta"]) * m["streak"],
             })
+            if len([b for b in bullets if b["category"] == "trend"]) >= 2:
+                break
 
-    # ── Anomalies ─────────────────────────────────────────────────────────
-    for a in anomalies[:3]:  # Top 3 by z-score
-        display = METRIC_DISPLAY.get(a["metric"], {})
-        label = a.get("metric_label", a["metric"])
-        higher_better = display.get("higher_is_better", True)
-        is_good = (a["direction"] == "spike") == higher_better
+    # ── ANOMALIES: unusual changes specific to this comparison mode ──────
+    # Use the mode-specific delta to find outliers instead of raw z-scores
+    if len(metric_deltas) >= 3:
+        delta_values = [m["delta"] for m in metric_deltas]
+        delta_mean = _mean(delta_values)
+        delta_std = _stddev(delta_values)
+        if delta_mean is not None and delta_std and delta_std > 0:
+            for m in metric_deltas:
+                z = (m["delta"] - delta_mean) / delta_std
+                if abs(z) >= 1.5:
+                    direction = "spike" if m["delta"] > delta_mean else "drop"
+                    bullets.append({
+                        "category": "anomaly",
+                        "severity": "warning",
+                        "text": f"{m['label']} showed an unusual {delta_label} {direction} "
+                                f"of {'+' if m['delta'] > 0 else ''}{m['delta']:.1f}% "
+                                f"(vs avg {delta_label} change of {delta_mean:+.1f}%)",
+                        "metric": m["key"],
+                        "score": abs(z) * 10,
+                    })
+                    if len([b for b in bullets if b["category"] == "anomaly"]) >= 2:
+                        break
 
-        severity = "positive" if is_good else "warning"
-        category = "opportunity" if is_good else "anomaly"
-        score = abs(a["z_score"]) * 10
-
-        bullets.append({
-            "category": category,
-            "severity": severity,
-            "text": f"{label} showed an unusual {a['direction']} "
-                    f"(z={a['z_score']:+.1f}, value={a['value']:.1f} vs mean={a['mean']:.1f})",
-            "metric": a["metric"],
-            "score": score,
-        })
-
-    # ── Segment Insights ──────────────────────────────────────────────────
+    # ── SEGMENT INSIGHTS (shared — structural, not temporal) ─────────────
     sig_segments = [s for s in segments if s["significant"]]
-    for s in sig_segments[:2]:  # Top 2 significant differences
+    for s in sig_segments[:1]:
         label = s.get("metric_label", s["metric"])
         higher_seg = s["segment_a"] if s["diff"] > 0 else s["segment_b"]
         lower_seg = s["segment_b"] if s["diff"] > 0 else s["segment_a"]
-        diff_pct = abs(s["pct_diff"])
-
         bullets.append({
             "category": "opportunity",
             "severity": "positive",
             "text": f"{higher_seg} outperforms {lower_seg} on {label} "
-                    f"by {diff_pct:.0f}% — investigate and replicate success patterns",
+                    f"by {abs(s['pct_diff']):.0f}% — replicate success patterns",
             "metric": s["metric"],
-            "score": diff_pct,
+            "score": abs(s["pct_diff"]),
         })
 
-    # ── Funnel Bottleneck ─────────────────────────────────────────────────
-    bottleneck = next((s for s in funnel if s["is_bottleneck"]), None)
-    if bottleneck and bottleneck["dropoff_rate"] > 20:
-        bullets.append({
-            "category": "threat",
-            "severity": "warning",
-            "text": f"Funnel bottleneck at '{bottleneck['label']}' — "
-                    f"{bottleneck['dropoff_rate']:.0f}% drop-off rate. "
-                    f"Improving this stage has highest potential impact",
-            "metric": bottleneck["stage"],
-            "score": bottleneck["dropoff_rate"],
-        })
-
-    # ── Correlation-Driven Opportunities ──────────────────────────────────
-    strong_corr = [c for c in correlations if c["strength"] == "strong"]
-    for c in strong_corr[:1]:  # Top 1
-        bullets.append({
-            "category": "opportunity",
-            "severity": "positive",
-            "text": f"Strong correlation (r={c['r']:.2f}) between "
-                    f"{c.get('engagement_label', c['engagement'])} and "
-                    f"{c.get('outcome_label', c['outcome'])} — "
-                    f"increasing engagement on this asset may drive conversions",
-            "metric": c["engagement"],
-            "score": abs(c["r"]) * 20,
-        })
-
-    # ── Recommended Actions ───────────────────────────────────────────────
-    # Generate actions based on top threats and opportunities
-    threat_bullets = [b for b in bullets if b["severity"] in ("warning", "negative")]
+    # ── RECOMMENDED ACTIONS (derived from mode-specific threats/opps) ────
+    threat_bullets = [b for b in bullets if b["category"] == "threat"]
     opp_bullets = [b for b in bullets if b["category"] == "opportunity"]
 
     if threat_bullets:
         top_threat = max(threat_bullets, key=lambda b: b["score"])
         templates = ACTION_TEMPLATES.get("declining_engagement", [])
         if templates:
-            action_text = templates[0].format(
-                segment="affected", metric=top_threat["metric"]
-            )
             bullets.append({
                 "category": "action",
                 "severity": "info",
-                "text": f"Recommended: {action_text}",
+                "text": f"Recommended: {templates[0].format(segment='affected', metric=top_threat['metric'])}",
                 "metric": top_threat["metric"],
                 "score": top_threat["score"] * 0.9,
             })
@@ -503,13 +505,10 @@ def generate_executive_summary(
         top_opp = max(opp_bullets, key=lambda b: b["score"])
         templates = ACTION_TEMPLATES.get("rising_engagement", [])
         if templates:
-            action_text = templates[0].format(
-                segment="high-performing", metric=top_opp["metric"]
-            )
             bullets.append({
                 "category": "action",
                 "severity": "info",
-                "text": f"Recommended: {action_text}",
+                "text": f"Recommended: {templates[0].format(segment='high-performing', metric=top_opp['metric'])}",
                 "metric": top_opp["metric"],
                 "score": top_opp["score"] * 0.8,
             })
