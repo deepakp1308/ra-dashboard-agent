@@ -1166,12 +1166,12 @@ function renderEngagementSection(engData) {
         <thead><tr><th>Page</th><th>Users</th><th>% of WAU</th><th>Δ WoW</th><th>Δ MoM</th><th>Δ YoY</th></tr></thead>
         <tbody>
           ${entries.map(([name, d]) => {
-            const pwPct = d.denominator > 0 && d.pw_users ? (d.pw_users / d.denominator * 100) : null;
-            const pyPct = d.denominator > 0 && d.py_users ? (d.py_users / d.denominator * 100) : null;
-            // MoM: find same page in prior-month data
+            // Use server-computed rates (correct denominators) — NOT pw_users/current_denom
+            const pwPct = d.pw_rate || null;
+            const pyPct = d.py_rate || null;
+            // MoM: use prior-month period's pre-computed rate (already correct)
             const momPage = momSection[name];
-            const momDenom = momPage?.denominator || 0;
-            const momPct = momDenom > 0 && momPage?.users ? (momPage.users / momDenom * 100) : null;
+            const momPct = momPage?.rate || null;
             return `<tr>
               <td style="font-weight:500;">${name}</td>
               <td>${fmtCount(d.users)}</td>
@@ -1535,11 +1535,11 @@ function clearAllContainers(msg) { ["exec-summary-wow","exec-summary-yoy","kpi-g
 async function loadData() { Object.values(chartInstances).forEach(c => c.destroy()); Object.keys(chartInstances).forEach(k => delete chartInstances[k]); clearAllContainers('<div class="state-box"><div class="spinner"></div> Loading...</div>');
   const matrix = await loadMatrix(); if (!matrix) { clearAllContainers('<div class="state-box"><strong style="color:var(--red)">Failed to load data</strong></div>'); return; }
   const key = getSnapshotKey(); const snapshot = matrix[key];
-  if (!snapshot) { clearAllContainers('<div class="state-box" style="flex-direction:column;gap:8px;"><strong>This filter combination requires the live server</strong></div>'); return; }
+  if (!snapshot) { clearAllContainers('<div class="state-box"><strong>This filter combination requires the live server</strong></div>'); return; }
   try { const metricsData = filterByDateRange(snapshot.metrics || []); const i2aData = filterByDateRange(snapshot.i2a || []); const adoptionData = filterByDateRange(snapshot.adoption || []); const engagementData = filterByDateRange(snapshot.engagement || []); const summaryWoW = snapshot.summary_wow || null; const summaryYoY = snapshot.summary_yoy || null; const funnelData = filterByDateRange(snapshot.page_funnel || []); const adoptionMap = new Map(adoptionData.map(d => [d.period_start, d]));
     if (!metricsData.length) { clearAllContainers('<div class="state-box">No data for this date range.</div>'); return; }
     renderExecSummary(summaryWoW, "exec-summary-wow", "Week-over-Week"); renderExecSummary(summaryYoY, "exec-summary-yoy", "Year-over-Year"); renderKPIGrid(metricsData, i2aData, adoptionMap); renderOverviewCharts(metricsData, adoptionMap, i2aData); renderI2ASection(i2aData); renderEngagementSection(engagementData); document.getElementById("adoption-section").innerHTML = ''; renderPageFunnels(funnelData);
-    document.getElementById('last-updated').textContent = 'Latest data: ' + fmtDate(metricsData[metricsData.length - 1]?.period_start ?? ''); document.getElementById('data-freshness').textContent = 'Snapshot refreshed Apr 5, 2026 | Filter: ' + key;
+    document.getElementById('last-updated').textContent = 'Latest data: ' + fmtDate(metricsData[metricsData.length - 1]?.period_start ?? ''); document.getElementById('data-freshness').textContent = 'Snapshot refreshed Apr 6, 2026 | Filter: ' + key;
   } catch(err) { console.error(err); clearAllContainers('<div class="state-box"><strong style="color:var(--red)">Error: ' + err.message + '</strong></div>'); }
 }
 loadData();

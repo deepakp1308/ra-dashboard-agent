@@ -1166,12 +1166,12 @@ function renderEngagementSection(engData) {
         <thead><tr><th>Page</th><th>Users</th><th>% of WAU</th><th>Δ WoW</th><th>Δ MoM</th><th>Δ YoY</th></tr></thead>
         <tbody>
           ${entries.map(([name, d]) => {
-            const pwPct = d.denominator > 0 && d.pw_users ? (d.pw_users / d.denominator * 100) : null;
-            const pyPct = d.denominator > 0 && d.py_users ? (d.py_users / d.denominator * 100) : null;
-            // MoM: find same page in prior-month data
+            // Use server-computed rates (correct denominators) — NOT pw_users/current_denom
+            const pwPct = d.pw_rate || null;
+            const pyPct = d.py_rate || null;
+            // MoM: use prior-month period's pre-computed rate (already correct)
             const momPage = momSection[name];
-            const momDenom = momPage?.denominator || 0;
-            const momPct = momDenom > 0 && momPage?.users ? (momPage.users / momDenom * 100) : null;
+            const momPct = momPage?.rate || null;
             return `<tr>
               <td style="font-weight:500;">${name}</td>
               <td>${fmtCount(d.users)}</td>

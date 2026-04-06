@@ -763,11 +763,16 @@ def get_engagement():
         py_val = r["py"] or 0
         pw_val = r["pw"] or 0
 
+        py_denom = r["py_denominator"] or 0
+        pw_denom = r["pw_denominator"] or 0
+
         entry = {
             "users": val,
             "rate": round((val / denom * 100) if denom > 0 else 0, 2),
             "py_users": py_val,
+            "py_rate": round((py_val / py_denom * 100) if py_denom > 0 else 0, 2),
             "pw_users": pw_val,
+            "pw_rate": round((pw_val / pw_denom * 100) if pw_denom > 0 else 0, 2),
             "denominator": denom,
         }
 
