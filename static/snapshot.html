@@ -334,11 +334,14 @@ body { background: var(--bg); font-family: var(--font); color: var(--text); min-
   border-collapse: collapse;
   font-size: 13px;
 }
-.eng-table th {
+.eng-table th, .i2a-table th {
   text-align: left; font-size: 11px; font-weight: 600; color: var(--muted);
   text-transform: uppercase; letter-spacing: .4px;
   padding: 8px 12px; border-bottom: 2px solid var(--border);
+  cursor: pointer; user-select: none; white-space: nowrap;
 }
+.eng-table th:hover, .i2a-table th:hover { color: var(--text); }
+.eng-table th .sort-arrow, .i2a-table th .sort-arrow { font-size: 10px; margin-left: 3px; }
 .eng-table td { padding: 8px 12px; border-bottom: 1px solid #f1f5f9; }
 .eng-table tr:last-child td { border-bottom: none; }
 
@@ -1125,6 +1128,9 @@ function renderI2ASection(data) {
   rows.forEach(r => {
     buildChart(r.chartId, labels, r.currentData, r.pwData, r.pyData, fmtPct, { fill: true });
   });
+
+  // Make I2A table sortable
+  makeSortable(document.querySelector(".i2a-table"));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1242,8 +1248,13 @@ function renderEngagementSection(engData) {
       } else if (mode === "supported_engaged") {
         container.innerHTML = makeTable(latestEng.supported_engaged, "Supported Engaged", "supported_engaged");
       }
+      // Re-apply sorting after tab switch
+      makeSortable(container.querySelector(".eng-table"));
     });
   });
+
+  // Make initial engagement table sortable
+  makeSortable(document.querySelector("#eng-table-container .eng-table"));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1327,6 +1338,9 @@ function renderPageFunnels(funnelData) {
     <!-- Auto-generated Insights & Recommendations -->
     ${generateFunnelInsights(pages)}
   `;
+
+  // Make funnel table sortable
+  makeSortable(el.querySelector(".eng-table"));
 }
 
 function generateFunnelInsights(pages) {
@@ -1419,6 +1433,88 @@ function generateFunnelInsights(pages) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+//  SORTABLE TABLES — click any column header to sort
+// ═══════════════════════════════════════════════════════════════════════════════
+function makeSortable(table) {
+  if (!table) return;
+  const headers = table.querySelectorAll("thead th");
+  if (!headers.length) return;
+
+  let currentCol = -1;
+  let ascending = false;
+
+  headers.forEach((th, colIdx) => {
+    th.addEventListener("click", () => {
+      const tbody = table.querySelector("tbody");
+      if (!tbody) return;
+      const rows = Array.from(tbody.querySelectorAll("tr"));
+
+      // Separate pinned rows (Coming Soon, Not tracked) from sortable rows
+      const sortable = [];
+      const pinned = [];
+      rows.forEach(r => {
+        const text = r.textContent.toLowerCase();
+        if (text.includes("coming soon") || text.includes("not tracked")) {
+          pinned.push(r);
+        } else {
+          sortable.push(r);
+        }
+      });
+
+      // Toggle direction
+      if (currentCol === colIdx) {
+        ascending = !ascending;
+      } else {
+        currentCol = colIdx;
+        ascending = false; // First click = descending (high to low)
+      }
+
+      // Parse cell value for sorting
+      function parseVal(row) {
+        const cell = row.querySelectorAll("td")[colIdx];
+        if (!cell) return 0;
+        let text = cell.textContent.trim();
+        // Strip delta badges — get just the number
+        if (text.includes("pp")) text = text.replace(/[▲▼—]/g, "").replace(/pp.*/, "").trim();
+        // Handle formatted numbers: 1.5M, 89.1K, 26.8%
+        if (text === "—" || text === "N/A" || text === "") return ascending ? Infinity : -Infinity;
+        let num = text.replace(/[,$%]/g, "");
+        if (num.endsWith("M")) num = parseFloat(num) * 1e6;
+        else if (num.endsWith("K")) num = parseFloat(num) * 1e3;
+        else if (num.endsWith("B")) num = parseFloat(num) * 1e9;
+        else num = parseFloat(num);
+        return isNaN(num) ? text.toLowerCase() : num;
+      }
+
+      sortable.sort((a, b) => {
+        const va = parseVal(a);
+        const vb = parseVal(b);
+        if (typeof va === "string" && typeof vb === "string") {
+          return ascending ? va.localeCompare(vb) : vb.localeCompare(va);
+        }
+        return ascending ? va - vb : vb - va;
+      });
+
+      // Rebuild tbody: sorted rows first, pinned at bottom
+      sortable.forEach(r => tbody.appendChild(r));
+      pinned.forEach(r => tbody.appendChild(r));
+
+      // Update header arrows
+      headers.forEach((h, i) => {
+        const existing = h.querySelector(".sort-arrow");
+        if (existing) existing.remove();
+        if (i === colIdx) {
+          const arrow = document.createElement("span");
+          arrow.className = "sort-arrow";
+          arrow.textContent = ascending ? " ▲" : " ▼";
+          h.appendChild(arrow);
+        }
+      });
+    });
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 //  GLOSSARY TOGGLE
 // ═══════════════════════════════════════════════════════════════════════════════
 function toggleGlossary(btn) {
@@ -1431,103 +1527,22 @@ function toggleGlossary(btn) {
 //  DATA FETCH & ORCHESTRATION
 // ═══════════════════════════════════════════════════════════════════════════════
 
-
 let SNAPSHOT_MATRIX = null;
-
-async function loadMatrix() {
-  if (SNAPSHOT_MATRIX) return SNAPSHOT_MATRIX;
-  try {
-    const r = await fetch('snapshot_matrix.json');
-    SNAPSHOT_MATRIX = await r.json();
-    return SNAPSHOT_MATRIX;
-  } catch(e) {
-    console.error('Failed to load snapshot matrix:', e);
-    return null;
-  }
+async function loadMatrix() { if (SNAPSHOT_MATRIX) return SNAPSHOT_MATRIX; try { const r = await fetch('snapshot_matrix.json'); SNAPSHOT_MATRIX = await r.json(); return SNAPSHOT_MATRIX; } catch(e) { return null; } }
+function getSnapshotKey() { return state.ecu + '|' + state.hvc + '|' + state.granularity; }
+function filterByDateRange(arr) { if (!arr || !arr.length || state.dateRange === 'all') return arr; const days = parseInt(state.dateRange); if (isNaN(days)) return arr; if (state.granularity === 'monthly') { return arr.slice(-Math.max(1, Math.ceil(days / 30))); } const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - days); return arr.filter(d => d.period_start >= cutoff.toISOString().slice(0, 10)); }
+function clearAllContainers(msg) { ["exec-summary-wow","exec-summary-yoy","kpi-grid-container","overview-charts","i2a-section","engagement-section","adoption-section","page-funnel-container"].forEach(id => { const el = document.getElementById(id); if (el) el.innerHTML = msg || ''; }); }
+async function loadData() { Object.values(chartInstances).forEach(c => c.destroy()); Object.keys(chartInstances).forEach(k => delete chartInstances[k]); clearAllContainers('<div class="state-box"><div class="spinner"></div> Loading...</div>');
+  const matrix = await loadMatrix(); if (!matrix) { clearAllContainers('<div class="state-box"><strong style="color:var(--red)">Failed to load data</strong></div>'); return; }
+  const key = getSnapshotKey(); const snapshot = matrix[key];
+  if (!snapshot) { clearAllContainers('<div class="state-box" style="flex-direction:column;gap:8px;"><strong>This filter combination requires the live server</strong><span style="font-size:12px;color:var(--muted);">Run <code>python3 server.py</code> for full interactivity.</span></div>'); return; }
+  try { const metricsData = filterByDateRange(snapshot.metrics || []); const i2aData = filterByDateRange(snapshot.i2a || []); const adoptionData = filterByDateRange(snapshot.adoption || []); const engagementData = filterByDateRange(snapshot.engagement || []); const summaryWoW = snapshot.summary_wow || null; const summaryYoY = snapshot.summary_yoy || null; const funnelData = filterByDateRange(snapshot.page_funnel || []); const adoptionMap = new Map(adoptionData.map(d => [d.period_start, d]));
+    if (!metricsData.length) { clearAllContainers('<div class="state-box">No data for this date range.</div>'); return; }
+    renderExecSummary(summaryWoW, "exec-summary-wow", "Week-over-Week"); renderExecSummary(summaryYoY, "exec-summary-yoy", "Year-over-Year"); renderKPIGrid(metricsData, i2aData, adoptionMap); renderOverviewCharts(metricsData, adoptionMap, i2aData); renderI2ASection(i2aData); renderEngagementSection(engagementData); document.getElementById("adoption-section").innerHTML = ''; renderPageFunnels(funnelData);
+    document.getElementById('last-updated').textContent = 'Latest data: ' + fmtDate(metricsData[metricsData.length - 1]?.period_start ?? ''); document.getElementById('data-freshness').textContent = 'Static snapshot — Apr 5, 2026 | Filter: ' + key;
+  } catch(err) { console.error(err); clearAllContainers('<div class="state-box"><strong style="color:var(--red)">Error: ' + err.message + '</strong></div>'); }
 }
-
-function getSnapshotKey() {
-  return state.ecu + '|' + state.hvc + '|' + state.granularity;
-}
-
-function filterByDateRange(arr) {
-  if (!arr || !arr.length || state.dateRange === 'all') return arr;
-  const days = parseInt(state.dateRange);
-  if (isNaN(days)) return arr;
-  const isMonthly = state.granularity === 'monthly';
-  if (isMonthly) {
-    const months = Math.max(1, Math.ceil(days / 30));
-    return arr.slice(-months);
-  }
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - days);
-  const cutoffStr = cutoff.toISOString().slice(0, 10);
-  return arr.filter(d => d.period_start >= cutoffStr);
-}
-
-function clearAllContainers(msg) {
-  ["exec-summary-wow","exec-summary-yoy","kpi-grid-container","overview-charts",
-   "i2a-section","engagement-section","adoption-section","page-funnel-container"]
-    .forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.innerHTML = msg || '';
-    });
-}
-
-async function loadData() {
-  Object.values(chartInstances).forEach(c => c.destroy());
-  Object.keys(chartInstances).forEach(k => delete chartInstances[k]);
-  clearAllContainers('<div class="state-box"><div class="spinner"></div> Loading...</div>');
-
-  const matrix = await loadMatrix();
-  if (!matrix) {
-    clearAllContainers('<div class="state-box"><strong style="color:var(--red)">Failed to load data file</strong></div>');
-    return;
-  }
-
-  const key = getSnapshotKey();
-  const snapshot = matrix[key];
-
-  if (!snapshot) {
-    clearAllContainers('<div class="state-box" style="flex-direction:column;gap:8px;"><strong>This filter combination requires the live server</strong><span style="font-size:12px;color:var(--muted);">Run <code>python3 server.py</code> for full interactivity.</span></div>');
-    return;
-  }
-
-  try {
-    const metricsData = filterByDateRange(snapshot.metrics || []);
-    const i2aData = filterByDateRange(snapshot.i2a || []);
-    const adoptionData = filterByDateRange(snapshot.adoption || []);
-    const engagementData = filterByDateRange(snapshot.engagement || []);
-    const summaryWoW = snapshot.summary_wow || null;
-    const summaryYoY = snapshot.summary_yoy || null;
-    const funnelData = filterByDateRange(snapshot.page_funnel || []);
-    const adoptionMap = new Map(adoptionData.map(d => [d.period_start, d]));
-
-    if (!metricsData.length) {
-      clearAllContainers('<div class="state-box">No data for this date range.</div>');
-      return;
-    }
-
-    renderExecSummary(summaryWoW, "exec-summary-wow", "Week-over-Week");
-    renderExecSummary(summaryYoY, "exec-summary-yoy", "Year-over-Year");
-    renderKPIGrid(metricsData, i2aData, adoptionMap);
-    renderOverviewCharts(metricsData, adoptionMap, i2aData);
-    renderI2ASection(i2aData);
-    renderEngagementSection(engagementData);
-    document.getElementById("adoption-section").innerHTML = '';
-    renderPageFunnels(funnelData);
-
-    const latestWeek = metricsData[metricsData.length - 1]?.period_start ?? '';
-    document.getElementById('last-updated').textContent = 'Latest data: ' + fmtDate(latestWeek);
-    document.getElementById('data-freshness').textContent = 'Static snapshot — Apr 5, 2026 | Filter: ' + key;
-  } catch(err) {
-    console.error(err);
-    clearAllContainers('<div class="state-box"><strong style="color:var(--red)">Error: ' + err.message + '</strong></div>');
-  }
-}
-
 loadData();
-
 </script>
 </body>
 </html>

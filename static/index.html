@@ -334,11 +334,14 @@ body { background: var(--bg); font-family: var(--font); color: var(--text); min-
   border-collapse: collapse;
   font-size: 13px;
 }
-.eng-table th {
+.eng-table th, .i2a-table th {
   text-align: left; font-size: 11px; font-weight: 600; color: var(--muted);
   text-transform: uppercase; letter-spacing: .4px;
   padding: 8px 12px; border-bottom: 2px solid var(--border);
+  cursor: pointer; user-select: none; white-space: nowrap;
 }
+.eng-table th:hover, .i2a-table th:hover { color: var(--text); }
+.eng-table th .sort-arrow, .i2a-table th .sort-arrow { font-size: 10px; margin-left: 3px; }
 .eng-table td { padding: 8px 12px; border-bottom: 1px solid #f1f5f9; }
 .eng-table tr:last-child td { border-bottom: none; }
 
@@ -1125,6 +1128,9 @@ function renderI2ASection(data) {
   rows.forEach(r => {
     buildChart(r.chartId, labels, r.currentData, r.pwData, r.pyData, fmtPct, { fill: true });
   });
+
+  // Make I2A table sortable
+  makeSortable(document.querySelector(".i2a-table"));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1242,8 +1248,13 @@ function renderEngagementSection(engData) {
       } else if (mode === "supported_engaged") {
         container.innerHTML = makeTable(latestEng.supported_engaged, "Supported Engaged", "supported_engaged");
       }
+      // Re-apply sorting after tab switch
+      makeSortable(container.querySelector(".eng-table"));
     });
   });
+
+  // Make initial engagement table sortable
+  makeSortable(document.querySelector("#eng-table-container .eng-table"));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1327,6 +1338,9 @@ function renderPageFunnels(funnelData) {
     <!-- Auto-generated Insights & Recommendations -->
     ${generateFunnelInsights(pages)}
   `;
+
+  // Make funnel table sortable
+  makeSortable(el.querySelector(".eng-table"));
 }
 
 function generateFunnelInsights(pages) {
@@ -1416,6 +1430,88 @@ function generateFunnelInsights(pages) {
       </div>
     </div>
   `;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SORTABLE TABLES — click any column header to sort
+// ═══════════════════════════════════════════════════════════════════════════════
+function makeSortable(table) {
+  if (!table) return;
+  const headers = table.querySelectorAll("thead th");
+  if (!headers.length) return;
+
+  let currentCol = -1;
+  let ascending = false;
+
+  headers.forEach((th, colIdx) => {
+    th.addEventListener("click", () => {
+      const tbody = table.querySelector("tbody");
+      if (!tbody) return;
+      const rows = Array.from(tbody.querySelectorAll("tr"));
+
+      // Separate pinned rows (Coming Soon, Not tracked) from sortable rows
+      const sortable = [];
+      const pinned = [];
+      rows.forEach(r => {
+        const text = r.textContent.toLowerCase();
+        if (text.includes("coming soon") || text.includes("not tracked")) {
+          pinned.push(r);
+        } else {
+          sortable.push(r);
+        }
+      });
+
+      // Toggle direction
+      if (currentCol === colIdx) {
+        ascending = !ascending;
+      } else {
+        currentCol = colIdx;
+        ascending = false; // First click = descending (high to low)
+      }
+
+      // Parse cell value for sorting
+      function parseVal(row) {
+        const cell = row.querySelectorAll("td")[colIdx];
+        if (!cell) return 0;
+        let text = cell.textContent.trim();
+        // Strip delta badges — get just the number
+        if (text.includes("pp")) text = text.replace(/[▲▼—]/g, "").replace(/pp.*/, "").trim();
+        // Handle formatted numbers: 1.5M, 89.1K, 26.8%
+        if (text === "—" || text === "N/A" || text === "") return ascending ? Infinity : -Infinity;
+        let num = text.replace(/[,$%]/g, "");
+        if (num.endsWith("M")) num = parseFloat(num) * 1e6;
+        else if (num.endsWith("K")) num = parseFloat(num) * 1e3;
+        else if (num.endsWith("B")) num = parseFloat(num) * 1e9;
+        else num = parseFloat(num);
+        return isNaN(num) ? text.toLowerCase() : num;
+      }
+
+      sortable.sort((a, b) => {
+        const va = parseVal(a);
+        const vb = parseVal(b);
+        if (typeof va === "string" && typeof vb === "string") {
+          return ascending ? va.localeCompare(vb) : vb.localeCompare(va);
+        }
+        return ascending ? va - vb : vb - va;
+      });
+
+      // Rebuild tbody: sorted rows first, pinned at bottom
+      sortable.forEach(r => tbody.appendChild(r));
+      pinned.forEach(r => tbody.appendChild(r));
+
+      // Update header arrows
+      headers.forEach((h, i) => {
+        const existing = h.querySelector(".sort-arrow");
+        if (existing) existing.remove();
+        if (i === colIdx) {
+          const arrow = document.createElement("span");
+          arrow.className = "sort-arrow";
+          arrow.textContent = ascending ? " ▲" : " ▼";
+          h.appendChild(arrow);
+        }
+      });
+    });
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
