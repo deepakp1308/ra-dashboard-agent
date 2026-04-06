@@ -21,12 +21,10 @@ ENDPOINTS = [
 ]
 
 COMBOS = [
-    {"ecu": "all", "hvc": "all", "granularity": "monthly"},
-    {"ecu": "ecu", "hvc": "all", "granularity": "monthly"},
-    {"ecu": "non_ecu", "hvc": "all", "granularity": "monthly"},
-    {"ecu": "all", "hvc": "hvc", "granularity": "monthly"},
-    {"ecu": "all", "hvc": "non_hvc", "granularity": "monthly"},
-    {"ecu": "all", "hvc": "all", "granularity": "weekly"},
+    {"ecu": ecu, "hvc": hvc, "granularity": gran}
+    for ecu in ["all", "ecu", "non_ecu"]
+    for hvc in ["all", "hvc", "non_hvc"]
+    for gran in ["monthly", "weekly"]
 ]
 
 

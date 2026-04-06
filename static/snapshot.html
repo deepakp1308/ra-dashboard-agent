@@ -399,12 +399,6 @@ body { background: var(--bg); font-family: var(--font); color: var(--text); min-
     <button class="filter-btn" data-filter="granularity" data-value="weekly">Weekly</button>
     <button class="filter-btn active" data-filter="granularity" data-value="monthly">Monthly</button>
   </div>
-  <div class="filter-group" title="New: active < 90 days. Tenured: active >= 90 days.">
-    <label>Tenure</label>
-    <button class="filter-btn active" data-filter="tenure" data-value="all">All</button>
-    <button class="filter-btn" data-filter="tenure" data-value="new">New</button>
-    <button class="filter-btn" data-filter="tenure" data-value="tenured">Tenured</button>
-  </div>
   <div class="filter-group">
     <label>Date Range</label>
     <button class="filter-btn active" data-filter="dateRange" data-value="all">All</button>
@@ -453,7 +447,7 @@ body { background: var(--bg); font-family: var(--font); color: var(--text); min-
 // ═══════════════════════════════════════════════════════════════════════════════
 //  STATE & CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════════
-const state = { ecu: "all", hvc: "all", granularity: "monthly", tenure: "all", dateRange: "all", date_start: "2024-01-01", date_end: "" };
+const state = { ecu: "all", hvc: "all", granularity: "monthly", dateRange: "all", date_start: "2024-01-01", date_end: "" };
 const chartInstances = {};
 let currentTab = "overview";
 let engagementTab = "all";
@@ -1460,16 +1454,11 @@ function filterByDateRange(arr) {
   if (!arr || !arr.length || state.dateRange === 'all') return arr;
   const days = parseInt(state.dateRange);
   if (isNaN(days)) return arr;
-
-  // For monthly granularity, convert days to months (minimum 1 month)
   const isMonthly = state.granularity === 'monthly';
   if (isMonthly) {
     const months = Math.max(1, Math.ceil(days / 30));
-    // Return last N entries (each entry = 1 month)
     return arr.slice(-months);
   }
-
-  // For weekly, filter by date
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - days);
   const cutoffStr = cutoff.toISOString().slice(0, 10);
@@ -1500,13 +1489,8 @@ async function loadData() {
   const snapshot = matrix[key];
 
   if (!snapshot) {
-    clearAllContainers('<div class="state-box" style="flex-direction:column;gap:8px;"><strong>This filter combination requires the live server</strong><span style="font-size:12px;color:var(--muted);">Available: All/Monthly, ECU/Monthly, Non-ECU/Monthly, HVC/Monthly, Non-HVC/Monthly, All/Weekly.<br>Run <code>python3 server.py</code> for full interactivity.</span></div>');
+    clearAllContainers('<div class="state-box" style="flex-direction:column;gap:8px;"><strong>This filter combination requires the live server</strong><span style="font-size:12px;color:var(--muted);">Run <code>python3 server.py</code> for full interactivity.</span></div>');
     return;
-  }
-
-  if (state.tenure !== 'all') {
-    const el = document.getElementById('exec-summary-wow');
-    if (el) el.innerHTML = '<div style="padding:8px 16px;font-size:11px;color:var(--amber);background:var(--amber-bg);border-radius:4px;margin:8px;">Tenure filter requires the live server. Showing All tenure data.</div>';
   }
 
   try {

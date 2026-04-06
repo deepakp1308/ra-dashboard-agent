@@ -399,12 +399,6 @@ body { background: var(--bg); font-family: var(--font); color: var(--text); min-
     <button class="filter-btn" data-filter="granularity" data-value="weekly">Weekly</button>
     <button class="filter-btn active" data-filter="granularity" data-value="monthly">Monthly</button>
   </div>
-  <div class="filter-group" title="New: active < 90 days. Tenured: active >= 90 days.">
-    <label>Tenure</label>
-    <button class="filter-btn active" data-filter="tenure" data-value="all">All</button>
-    <button class="filter-btn" data-filter="tenure" data-value="new">New</button>
-    <button class="filter-btn" data-filter="tenure" data-value="tenured">Tenured</button>
-  </div>
   <div class="filter-group">
     <label>Date Range</label>
     <button class="filter-btn active" data-filter="dateRange" data-value="all">All</button>
@@ -453,7 +447,7 @@ body { background: var(--bg); font-family: var(--font); color: var(--text); min-
 // ═══════════════════════════════════════════════════════════════════════════════
 //  STATE & CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════════
-const state = { ecu: "all", hvc: "all", granularity: "monthly", tenure: "all", dateRange: "all", date_start: "2024-01-01", date_end: "" };
+const state = { ecu: "all", hvc: "all", granularity: "monthly", dateRange: "all", date_start: "2024-01-01", date_end: "" };
 const chartInstances = {};
 let currentTab = "overview";
 let engagementTab = "all";
@@ -1475,7 +1469,7 @@ async function loadData() {
     });
 
   try {
-    const params = { ecu: state.ecu, hvc: state.hvc, granularity: state.granularity, tenure: state.tenure, date_start: state.date_start };
+    const params = { ecu: state.ecu, hvc: state.hvc, granularity: state.granularity, tenure: "all", date_start: state.date_start };
     if (state.date_end) params.date_end = state.date_end;
     const qs = new URLSearchParams(params).toString();
 
